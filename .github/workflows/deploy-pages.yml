@@ -1,0 +1,114 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master, development]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare site content
+        run: |
+          mkdir -p _site_content/drivers
+
+          # Determine if this is a dev build
+          if [[ "$GITHUB_REF" == "refs/heads/development" ]]; then
+            DEV_BANNER='> **⚠ Development version** — this is built from the `development` branch and may contain unstable changes.'
+          else
+            DEV_BANNER=""
+          fi
+
+          # Jekyll config
+          cat > _site_content/_config.yml << 'EOF'
+          title: wmbusmeters
+          description: Acquire and decode utility meter readings from wired m-bus or wireless wm-bus meters
+          theme: jekyll-theme-cayman
+          EOF
+
+          # Main page from README
+          {
+            echo '---'
+            echo 'layout: default'
+            echo '---'
+            echo ''
+            if [ -n "$DEV_BANNER" ]; then
+              echo "$DEV_BANNER"
+              echo ''
+            fi
+            cat README.md
+          } > _site_content/index.md
+
+          # Copy raw driver files
+          cp drivers/src/*.xmq _site_content/drivers/
+
+          # Generate drivers index page
+          {
+            echo '---'
+            echo 'layout: default'
+            echo 'title: Drivers'
+            echo '---'
+            echo ''
+            echo '# wmbusmeters Drivers'
+            echo ''
+            echo 'Available meter drivers:'
+            echo ''
+            for f in drivers/src/*.xmq; do
+              name=$(basename "$f" .xmq)
+              echo "- [${name}](${name}.xmq)"
+            done
+          } > _site_content/drivers/index.md
+
+          # Changelog page
+          {
+            echo '---'
+            echo 'layout: default'
+            echo 'title: Changelog'
+            echo '---'
+            echo ''
+            cat CHANGES
+          } > _site_content/changes.md
+
+      - name: Ensure Jekyll config exists at root (development branch)
+        if: github.ref == 'refs/heads/development'
+        run: |
+          mkdir -p _root_config
+          cat > _root_config/_config.yml << 'EOF'
+          title: wmbusmeters
+          description: Acquire and decode utility meter readings from wired m-bus or wireless wm-bus meters
+          theme: jekyll-theme-cayman
+          EOF
+
+      - name: Push root Jekyll config (development branch)
+        if: github.ref == 'refs/heads/development'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _root_config
+          clean: false
+          branch: gh-pages
+
+      - name: Deploy to root (master branch)
+        if: github.ref == 'refs/heads/master'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site_content
+          clean-exclude: dev
+          branch: gh-pages
+
+      - name: Deploy to /dev (development branch)
+        if: github.ref == 'refs/heads/development'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site_content
+          target-folder: dev
+          branch: gh-pages
