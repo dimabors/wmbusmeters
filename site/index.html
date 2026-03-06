@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>wmbusmeters</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1><a href="./">wmbusmeters</a></h1>
+        <p class="subtitle">Analyze wireless M-Bus telegrams</p>
+        <nav>
+            <a href="./">Analyze</a>
+            <a href="drivers/">Drivers</a>
+            <a href="https://github.com/dimabors/wmbusmeters" target="_blank">GitHub</a>
+        </nav>
+    </header>
+
+    <main>
+        <section class="analyzer">
+            <div class="input-group">
+                <label for="telegram">Telegram (hex)</label>
+                <textarea id="telegram" rows="3" placeholder="Paste your WMBus telegram hex string here, e.g. 3E44A5119035246141047A1A0030052F2F..."></textarea>
+            </div>
+
+            <div class="input-row">
+                <div class="input-group">
+                    <label for="driver">Driver <span class="optional">(optional, auto-detect)</span></label>
+                    <select id="driver">
+                        <option value="">Auto-detect</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="key">Encryption Key <span class="optional">(optional)</span></label>
+                    <input type="text" id="key" placeholder="32 hex chars AES-128 key" maxlength="32" pattern="[0-9a-fA-F]*">
+                </div>
+            </div>
+
+            <div class="input-row">
+                <div class="input-group">
+                    <label for="format">Output Format</label>
+                    <select id="format">
+                        <option value="plain">Plain</option>
+                        <option value="json" selected>JSON</option>
+                        <option value="terminal">Terminal (colored)</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button id="analyze-btn" disabled>
+                        <span class="btn-text">Analyze</span>
+                        <span class="btn-loading" hidden>Analyzing...</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="status-bar" class="status-bar">
+                <span id="status-text">Loading wmbusmeters engine...</span>
+                <span id="status-icon" class="loading-spinner"></span>
+            </div>
+
+            <div id="results" class="results" hidden>
+                <div class="results-header">
+                    <h2>Results</h2>
+                    <button id="copy-btn" class="copy-btn" title="Copy to clipboard">Copy</button>
+                </div>
+                <pre id="output"></pre>
+            </div>
+
+            <div id="error" class="error" hidden>
+                <h2>Error</h2>
+                <pre id="error-output"></pre>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Powered by <a href="https://github.com/dimabors/wmbusmeters">wmbusmeters</a> compiled to WebAssembly.</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

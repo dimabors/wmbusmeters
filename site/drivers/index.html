@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>wmbusmeters - Drivers</title>
+    <link rel="stylesheet" href="../style.css">
+    <style>
+        .driver-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        .driver-list a {
+            display: block;
+            padding: 0.6rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            text-decoration: none;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .driver-list a:hover {
+            border-color: var(--accent);
+            background: var(--bg-input);
+        }
+        .driver-count {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1><a href="../">wmbusmeters</a></h1>
+        <p class="subtitle">Available meter drivers</p>
+        <nav>
+            <a href="../">Analyze</a>
+            <a href="./">Drivers</a>
+            <a href="https://github.com/dimabors/wmbusmeters" target="_blank">GitHub</a>
+        </nav>
+    </header>
+
+    <main>
+        <h2 style="margin-bottom: 0.25rem;">Drivers</h2>
+        <p class="driver-count" id="count"></p>
+        <div class="driver-list" id="driver-list">
+            <p style="color: var(--text-muted);">Loading...</p>
+        </div>
+    </main>
+
+    <footer>
+        <p>Powered by <a href="https://github.com/dimabors/wmbusmeters">wmbusmeters</a></p>
+    </footer>
+
+    <script>
+        fetch('drivers.json')
+            .then(r => r.json())
+            .then(drivers => {
+                drivers.sort();
+                document.getElementById('count').textContent = drivers.length + ' drivers available';
+                const list = document.getElementById('driver-list');
+                list.innerHTML = '';
+                drivers.forEach(name => {
+                    const a = document.createElement('a');
+                    a.href = name + '.xmq';
+                    a.textContent = name;
+                    list.appendChild(a);
+                });
+            })
+            .catch(() => {
+                document.getElementById('driver-list').innerHTML =
+                    '<p style="color: var(--error);">Could not load driver list.</p>';
+            });
+    </script>
+</body>
+</html>

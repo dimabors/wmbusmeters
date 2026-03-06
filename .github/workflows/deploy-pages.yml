@@ -17,85 +17,121 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+
+      - name: Build WASM
+        run: |
+          chmod +x wasm/build_wasm.sh
+          bash wasm/build_wasm.sh
 
       - name: Prepare site content
         run: |
           mkdir -p _site_content/drivers
 
-          # Determine if this is a dev build
-          if [[ "$GITHUB_REF" == "refs/heads/development" ]]; then
-            DEV_BANNER='> **⚠ Development version** — this is built from the `development` branch and may contain unstable changes.'
-          else
-            DEV_BANNER=""
+          # Copy static site files
+          cp site/index.html _site_content/
+          cp site/style.css _site_content/
+          cp site/app.js _site_content/
+
+          # Copy WASM artifacts
+          if [ -f build_wasm/wmbusmeters.js ]; then
+            cp build_wasm/wmbusmeters.js _site_content/
+            cp build_wasm/wmbusmeters.wasm _site_content/
+            cp build_wasm/wmbusmeters.worker.js _site_content/ 2>/dev/null || true
           fi
 
-          # Jekyll config
-          cat > _site_content/_config.yml << 'EOF'
-          title: wmbusmeters
-          description: Acquire and decode utility meter readings from wired m-bus or wireless wm-bus meters
-          theme: jekyll-theme-cayman
-          EOF
-
-          # Main page from README
-          {
-            echo '---'
-            echo 'layout: default'
-            echo '---'
-            echo ''
-            if [ -n "$DEV_BANNER" ]; then
-              echo "$DEV_BANNER"
-              echo ''
-            fi
-            cat README.md
-          } > _site_content/index.md
-
-          # Copy raw driver files
+          # Copy driver XMQ files
           cp drivers/src/*.xmq _site_content/drivers/
 
-          # Generate drivers index page
-          {
-            echo '---'
-            echo 'layout: default'
-            echo 'title: Drivers'
-            echo '---'
-            echo ''
-            echo '# wmbusmeters Drivers'
-            echo ''
-            echo 'Available meter drivers:'
-            echo ''
-            for f in drivers/src/*.xmq; do
-              name=$(basename "$f" .xmq)
-              echo "- [${name}](${name}.xmq)"
-            done
-          } > _site_content/drivers/index.md
+          # Generate drivers JSON list
+          echo '[' > _site_content/drivers/drivers.json
+          first=true
+          for f in drivers/src/*.xmq; do
+            name=$(basename "$f" .xmq)
+            if [ "$first" = true ]; then
+              first=false
+            else
+              echo ',' >> _site_content/drivers/drivers.json
+            fi
+            echo "  \"$name\"" >> _site_content/drivers/drivers.json
+          done
+          echo ']' >> _site_content/drivers/drivers.json
 
-          # Changelog page
-          {
-            echo '---'
-            echo 'layout: default'
-            echo 'title: Changelog'
-            echo '---'
-            echo ''
-            cat CHANGES
-          } > _site_content/changes.md
+          # Copy drivers index page
+          cp site/drivers/index.html _site_content/drivers/
 
-      - name: Ensure Jekyll config exists at root (development branch)
-        if: github.ref == 'refs/heads/development'
-        run: |
-          mkdir -p _root_config
-          cat > _root_config/_config.yml << 'EOF'
-          title: wmbusmeters
-          description: Acquire and decode utility meter readings from wired m-bus or wireless wm-bus meters
-          theme: jekyll-theme-cayman
-          EOF
+          # Add COOP/COEP headers for SharedArrayBuffer (needed for pthreads WASM)
+          # GitHub Pages doesn't allow custom headers, so we use a service worker
+          cat > _site_content/coi-serviceworker.js << 'SWEOF'
+          /*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT */
+          let coepCredentialless = false;
+          if (typeof window === 'undefined') {
+            self.addEventListener("install", () => self.skipWaiting());
+            self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+            self.addEventListener("message", (ev) => {
+              if (ev.data && ev.data.type === "deregister") {
+                self.registration.unregister().then(() => {
+                  ev.source.postMessage({ type: "deregistered" });
+                });
+              }
+            });
+            self.addEventListener("fetch", function (e) {
+              if (e.request.cache === "only-if-cached" && e.request.mode !== "same-origin") return;
+              e.respondWith(
+                fetch(e.request).then((r) => {
+                  if (r.status === 0) return r;
+                  const headers = new Headers(r.headers);
+                  headers.set("Cross-Origin-Embedder-Policy", coepCredentialless ? "credentialless" : "require-corp");
+                  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+                  return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
+                }).catch((e) => console.error(e))
+              );
+            });
+          } else {
+            (() => {
+              const reloadedBySelf = window.sessionStorage.getItem("coiReloadedBySelf");
+              window.sessionStorage.removeItem("coiReloadedBySelf");
+              const coepDegrading = reloadedBySelf === "coepdegrade";
+              if (window.crossOriginIsolated !== false || reloadedBySelf) {
+                if (window.crossOriginIsolated) return;
+                if (!coepDegrading) {
+                  coepCredentialless = true;
+                  window.sessionStorage.setItem("coiReloadedBySelf", "coepdegrade");
+                  window.location.reload();
+                  return;
+                }
+              }
+              if (window.isSecureContext && !window.crossOriginIsolated) {
+                navigator.serviceWorker.register(window.document.currentScript.src).then(
+                  (registration) => {
+                    if (registration.active && !navigator.serviceWorker.controller) {
+                      window.sessionStorage.setItem("coiReloadedBySelf", "true");
+                      window.location.reload();
+                    }
+                  },
+                  console.error
+                );
+              }
+            })();
+          }
+          SWEOF
 
-      - name: Push root Jekyll config (development branch)
-        if: github.ref == 'refs/heads/development'
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          folder: _root_config
-          clean: false
-          branch: gh-pages
+          # Inject the service worker script into index.html (before </head>)
+          sed -i 's|</head>|<script src="coi-serviceworker.js"></script>\n</head>|' _site_content/index.html
+
+          # Add dev banner for development branch
+          if [[ "$GITHUB_REF" == "refs/heads/development" ]]; then
+            sed -i 's|<p class="subtitle">Analyze wireless M-Bus telegrams</p>|<p class="subtitle">Analyze wireless M-Bus telegrams</p>\n        <p class="subtitle" style="color: #ffd700;">⚠ Development version — built from the development branch</p>|' _site_content/index.html
+          fi
+
+          # Disable Jekyll processing (we serve static HTML)
+          touch _site_content/.nojekyll
 
       - name: Deploy to root (master branch)
         if: github.ref == 'refs/heads/master'
