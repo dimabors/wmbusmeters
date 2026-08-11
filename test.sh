@@ -3,6 +3,11 @@
 PROG="$1"
 TESTINTERNAL=$(dirname $PROG)/testinternals
 
+echo
+echo "Testing wmbusmeters version:"
+$PROG --version
+echo
+
 if [ ! -x $PROG ]
 then
     echo No such executable \"$PROG\"
@@ -14,6 +19,8 @@ then
     echo "You have to install jq! Try: sudo apt install jq"
     exit 1
 fi
+
+export TZ=UTC
 
 $TESTINTERNAL
 if [ "$?" = "0" ]; then
@@ -30,7 +37,11 @@ if [ "$?" != "0" ]; then RC="1"; fi
 tests/test_s1_meters.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
+
 tests/test_non_existant_driver.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
+tests/test_download_drivers.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
 tests/test_mbus.sh $PROG
@@ -190,6 +201,9 @@ if [ "$?" != "0" ]; then RC="1"; fi
 ./tests/test_hex_cmdline.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
+./tests/test_template_field.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
 ./tests/test_json_stdin.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
@@ -212,6 +226,9 @@ if [ "$?" != "0" ]; then RC="1"; fi
 if [ "$?" != "0" ]; then RC="1"; fi
 
 ./tests/test_rtlwmbus_linkmodes.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
+./tests/test_bad_telegrams.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
 if [ -s build/xmq ]
@@ -248,9 +265,11 @@ if [ "$?" != "0" ]; then RC="1"; fi
 ./tests/test_metershell2.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
-if [ -x ../additional_tests.sh ]
+# Only run the python3 tests if python3 is installed.
+if command -v python3 > /dev/null 2> /dev/null
 then
-    (cd ..; ./additional_tests.sh $PROG)
+    tests/test_socket.py $PROG
+    if [ "$?" != "0" ]; then RC="1"; fi
 fi
 
 # Only run the netcat tests if netcat is installed.
@@ -269,6 +288,11 @@ then
         ./tests/test_nc3.sh $PROG
         if [ "$?" != "0" ]; then RC="1"; fi
     fi
+fi
+
+if [ -x ../additional_tests.sh ]
+then
+    (cd ..; ./additional_tests.sh $PROG)
 fi
 
 echo Slower tests...

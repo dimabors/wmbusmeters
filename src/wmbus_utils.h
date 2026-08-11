@@ -18,18 +18,22 @@
 #ifndef WMBUS_UTILS_H
 #define WMBUS_UTILS_H
 
-#include "util.h"
-#include "threads.h"
-#include "wmbus.h"
+#include "always.h"
 
-bool decrypt_ELL_AES_CTR(Telegram *t, vector<uchar> &frame, vector<uchar>::iterator &pos, vector<uchar> &aeskey);
-bool decrypt_TPL_AES_CBC_IV(Telegram *t, vector<uchar> &frame, vector<uchar>::iterator &pos, vector<uchar> &aeskey,
+struct Telegram;
+
+bool decrypt_ELL_AES_CTR(Telegram *t,std::vector<uchar> &frame,std::vector<uchar>::iterator &pos,std::vector<uchar> &aeskey);
+bool decrypt_TPL_AES_CBC_IV(Telegram *t,std::vector<uchar> &frame,std::vector<uchar>::iterator &pos,std::vector<uchar> &aeskey,
                             int *num_encrypted_bytes,
                             int *num_not_encrypted_at_end);
-bool decrypt_TPL_AES_CBC_NO_IV(Telegram *t, vector<uchar> &frame, vector<uchar>::iterator &pos, vector<uchar> &aeskey,
+bool decrypt_TPL_AES_CBC_NO_IV(Telegram *t,std::vector<uchar> &frame,std::vector<uchar>::iterator &pos,std::vector<uchar> &aeskey,
                                int *num_encrypted_bytes,
                                int *num_not_encrypted_at_end);
 
-string frameTypeKamstrupC1(int ft);
+// iv8 must be 8 bytes. Pass all-zeros for mode 2 (DES_NO_IV_DEPRECATED).
+bool decrypt_TPL_DES_CBC(Telegram *t,std::vector<uchar> &frame,std::vector<uchar>::iterator &pos,
+                         std::vector<uchar> &deskey, const uchar *iv8,
+                         int *num_encrypted_bytes,
+                         int *num_not_encrypted_at_end);
 
 #endif

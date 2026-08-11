@@ -15,14 +15,16 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"serial.h"
+#include"util.h"
 
 #include<assert.h>
 #include<fcntl.h>
-#include<grp.h>
 #include<pthread.h>
 #include<semaphore.h>
 #include<string.h>
@@ -38,6 +40,7 @@ const int DEFAULT_BAUD_RATE = 19200;
 
 enum class RcUartBaudRate : uchar
 {
+    UNKNOWN = 0,
     b2400 = 1,
     b4800 = 2,
     b9600 = 3,
@@ -67,24 +70,23 @@ static RcUartBaudRate rcUartBaudRateFromBauds(int baud_rate)
         case 115200: return RcUartBaudRate::b115200;
         case 230400: return RcUartBaudRate::b230400;
     }
-    throw std::invalid_argument("Unable to convert baud_rate: " + std::to_string(baud_rate) + " to RC enum");
+    return RcUartBaudRate::UNKNOWN;
 }
 
-static int getConfiguredBaudRate(const Detected& d) noexcept
-try
+static int getConfiguredBaudRate(const Detected& d)
 {
     if (d.specified_device.bps.empty())
     {
         return DEFAULT_BAUD_RATE;
     }
-    const int result = stoi(d.specified_device.bps);
-    info("(rc1180) Boud rate overwritten to %i\n", result);
-    return result;
-}
-catch(const std::exception& e)
-{
-    warning("(rc1180) Unable to convert baud_rate: \"%s\" to int: %s - using default\n",
-            d.specified_device.bps.c_str(), e.what());
+    int result = atoi(d.specified_device.bps.c_str());
+    if (result > 0)
+    {
+        info("(rc1180) baud rate set to %i\n", result);
+        return result;
+    }
+    warning("(rc1180) unable to convert baud_rate: \"%s\" to int - using default\n",
+            d.specified_device.bps.c_str());
     return DEFAULT_BAUD_RATE;
 }
 
@@ -159,7 +161,7 @@ struct ConfigRC1180
     }
 };
 
-struct WMBusRC1180 : public virtual BusDeviceCommonImplementation
+struct WMBusRC1180 : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -325,7 +327,7 @@ bool WMBusRC1180::deviceSetLinkModes(LinkModeSet lms)
     if (!canSetLinkModes(lms))
     {
         string modes = lms.hr();
-        error("(rc1180) setting link mode(s) %s is not supported\n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(rc1180) setting link mode(s) %s is not supported\n", modes.c_str());
     }
 
     // Do not actually try to change the link mode, we assume it is T1.
@@ -380,8 +382,7 @@ void WMBusRC1180::processSerialData()
                     rssi = read_buffer_[payload_offset+payload_len-1];
                     payload_len--;
                 }
-                uchar l = payload_len;
-                payload.insert(payload.end(), &l, &l+1); // Re-insert the len byte.
+                payload.insert(payload.end(), payload_len); // Re-insert the len byte.
                 payload.insert(payload.end(), read_buffer_.begin()+payload_offset, read_buffer_.begin()+payload_offset+payload_len);
             }
             read_buffer_.erase(read_buffer_.begin(), read_buffer_.begin()+frame_length);
@@ -392,7 +393,6 @@ void WMBusRC1180::processSerialData()
 }
 
 AccessCheck detectRC1180(Detected *detected, shared_ptr<SerialCommunicationManager> manager)
-try
 {
     // Talk to the device and expect a very specific answer.
     const int baud_rate = getConfiguredBaudRate(*detected);
@@ -433,9 +433,12 @@ try
 
     ConfigRC1180 co;
     ok = co.decode(data);
-    if (!ok || co.uart_baud_rate != rcUartBaudRateFromBauds(baud_rate))
+    if (!ok)
     {
-        // Decode must be ok and the uart_baud_rate mus match the speed we are using.
+        // Decode must be ok
+        // Skipping old test: co.uart_baud_rate != rcUartBaudRateFromBauds(baud_rate)
+        // If we received a config and it decoded ok, then clearly the baud rate is correct,
+        // otherwise we could not have received the config.
         serial->close();
         verbose("(rc1180) are you there? no.\n");
         return AccessCheck::NoProperResponse;
@@ -473,9 +476,4 @@ try
     verbose("(rc1180) are you there? yes %s\n", co.dongleId().c_str());
 
     return AccessCheck::AccessOK;
-}
-catch(const std::exception& e)
-{
-    warning("(rc1180) are you there? dunno, exception occured: %s\n", e.what());
-    return AccessCheck::NoProperResponse;
 }

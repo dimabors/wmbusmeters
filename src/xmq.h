@@ -1,4 +1,4 @@
-/* libxmq - Copyright (C) 2023-2025 Fredrik Öhrström (spdx: MIT)
+/* libxmq - Copyright (C) 2023-2026 Fredrik Öhrström (spdx: MIT)
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -52,13 +52,13 @@ extern "C" _hideLBfromEditor
 */
 typedef struct XMQDoc XMQDoc;
 
-/** Opaque structure referencing a node/attr in the xmq/xml/json document.
+/** Opaque pointer referencing a node/attr in the xmq/xml/json document.
 
-    XMQNode:
+    XMQNodePtr:
 
-    Structure referencing a node/attr in the xmq/xml/json document.
+    Pointer to a node/attr in the xmq/xml/json document.
 */
-typedef struct XMQNode XMQNode;
+typedef void *XMQNodePtr;
 
 /**
     XMQParseState:
@@ -137,6 +137,7 @@ typedef enum
     @XMQ_FLAG_NOMERGE: Do not merge text and character entities.
     @XMQ_FLAG_IXML_ALL_PARSES: When ixml parse is ambiguous generate all parses.
     @XMQ_FLAG_IXML_TRY_TO_RECOVER: When ixml parse fails, try to recover.
+    @XMQ_FLAG_IXML_FAIL_SILENT: If the ixml parse fails generate an empty document and no errors.
 
     If a 0 is provided as the flags to the parse functions, then it will parse using the these default settings:
     When loading xml/html:
@@ -161,6 +162,7 @@ typedef enum
     XMQ_FLAG_NOMERGE = 8,
     XMQ_FLAG_IXML_ALL_PARSES = 16,
     XMQ_FLAG_IXML_TRY_TO_RECOVER = 32,
+    XMQ_FLAG_IXML_FAIL_SILENT = 64,
 } XMQFlagBits;
 
 /**
@@ -247,10 +249,12 @@ typedef enum
     @node: The node triggering the callback.
     @user_data: The user data supplied to for_each.
 */
-typedef XMQProceed (*XMQNodeCallback)(XMQDoc *doc, XMQNode *node, void *user_data);
+typedef XMQProceed (*XMQNodeCallback)(XMQDoc *doc, XMQNodePtr node, void *user_data);
 
 /**
-    XMQParseError:
+    XMQStatus
+
+    @XMQ_OK: no error
     @XMQ_ERROR_CANNOT_READ_FILE: file not found or cannot be opened for reading.
     @XMQ_ERROR_OOM: out of memory.
     @XMQ_ERROR_NOT_XMQ: expected xmq but auto detect sees early that it is not xmq.
@@ -277,14 +281,18 @@ typedef XMQProceed (*XMQNodeCallback)(XMQDoc *doc, XMQNode *node, void *user_dat
     @XMQ_ERROR_EXPECTED_XML: x
     @XMQ_ERROR_EXPECTED_HTML: x
     @XMQ_ERROR_EXPECTED_JSON: x
-    @XMQ_ERROR_PARSING_XML:
-    @XMQ_ERROR_PARSING_HTML:
-
-    Possible parse errors.
+    @XMQ_ERROR_PARSING_XML: x
+    @XMQ_ERROR_PARSING_HTML: x
+    @XMQ_ERROR_VALUE_CANNOT_START_WITH: x
+    @XMQ_ERROR_INVALID_NAMESPACE_URI: x
+    @XMQ_ERROR_INVALID_NAMESPACE_PREFIX: x
+    @XMQ_ERROR_NAMESPACE_PREFIX_ALREADY_TAKEN: x
+    @XMQ_ERROR_IXML_SYNTAX_ERROR: x
+    @XMQ_WARNING_QUOTES_NEEDED: x
 */
 typedef enum
 {
-    XMQ_ERROR_NONE = 0,
+    XMQ_OK = 0,
     XMQ_ERROR_CANNOT_READ_FILE = 1,
     XMQ_ERROR_OOM = 2,
     XMQ_ERROR_NOT_XMQ = 3,
@@ -315,9 +323,42 @@ typedef enum
     XMQ_ERROR_PARSING_XML = 28,
     XMQ_ERROR_PARSING_HTML = 29,
     XMQ_ERROR_VALUE_CANNOT_START_WITH = 30,
+    XMQ_ERROR_INVALID_NAMESPACE_URI = 31,
+    XMQ_ERROR_INVALID_NAMESPACE_PREFIX = 32,
+    XMQ_ERROR_NAMESPACE_PREFIX_ALREADY_TAKEN = 33,
+    XMQ_ERROR_NOT_QUOTED = 34,
+    XMQ_ERROR_BAD_RANGE = 35,
     XMQ_ERROR_IXML_SYNTAX_ERROR = 50,
     XMQ_WARNING_QUOTES_NEEDED = 1000
-} XMQParseError;
+} XMQStatus;
+
+struct XMQReturnDoc
+{
+    XMQStatus status;
+    XMQDoc    *doc;
+};
+typedef struct XMQReturnDoc XMQReturnDoc;
+
+struct XMQReturnNode
+{
+    XMQStatus status;
+    XMQNodePtr node;
+};
+typedef struct XMQReturnNode XMQReturnNode;
+
+struct XMQReturnString
+{
+    XMQStatus status;
+    char *string;
+};
+typedef struct XMQReturnString XMQReturnString;
+
+struct XMQReturnConstString
+{
+    XMQStatus status;
+    const char *string;
+};
+typedef struct XMQReturnConstString XMQReturnConstString;
 
 /**
     XMQCoreType:
@@ -384,7 +425,7 @@ XMQContentType xmqDetectContentType(const char *start, const char *stop);
    xmqParseErrorToString:
    @e: Translate this error to a human readable string.
 */
-const char *xmqParseErrorToString(XMQParseError e);
+const char *xmqParseErrorToString(XMQStatus e);
 
 /**
     xmqNewParseCallbacks:
@@ -461,7 +502,7 @@ void xmqSetStateSourceName(XMQParseState *state, const char *source_name);
     xmqStateErrno:
     @state: the parse state.
 
-    If the parse fails then use this function to get the integer value of XMQParseError.
+    If the parse fails then use this function to get the integer value of XMQStatus.
 */
 int xmqStateErrno(XMQParseState *state);
 
@@ -496,7 +537,7 @@ void xmqSetTryToRecoverIXML(XMQParseState *state, bool try_recover);
 
     Create an empty document object.
 */
-XMQDoc *xmqNewDoc();
+XMQReturnDoc xmqNewDoc();
 
 /**
     xmqSetDocSourceName:
@@ -543,7 +584,63 @@ void xmqSetOriginalSize(XMQDoc *doq, size_t size);
 
     Get root node suitable for xmqForeach.
 */
-XMQNode *xmqGetRootNode(XMQDoc *doq);
+XMQNodePtr xmqGetRootNode(XMQDoc *doq);
+
+#define XMQ_NO_NAMESPACE "(XMQ_NO_NAMESPACE)"
+
+/**
+    xmqAddRootNode:
+
+    Create a root node with a specified namespace uri (well iri nowadays).
+    If no namespace is desired: root (<root></<root>) then supply XMQ_NO_NAMESPACE
+    For an empty namespace is desired: root(xmlns) (<root xmlns=""></root>) then supply ""
+    Otherwise, supply "urn:myapp" as uri and you will get:
+    root(xmlns=urn:myapp) (<root xmlns="urn:myapp"></root>)
+
+    By default this namespace has no prefix.
+
+    Return a struct containing: .rc which is XMQ_OK if everything is ok
+    and .node which is the new root node.
+*/
+XMQReturnNode xmqAddRootNode(XMQDoc *doq, const char *name, const char *ns_uri);
+
+/**
+    xmqPreferPrefix:
+
+    Set the preferred prefix for a namespace uri. This
+*/
+XMQStatus xmqPreferPrefix(XMQDoc *doq, XMQNodePtr node, const char *ns_uri, const char *prefix);
+
+/**
+    xmqAddNamespace(XMQDoc *doq, XMQNodePtr node, const char *ns_prefix, const char *ns_iri)
+
+    Set the preferred prefix for the node and its namespace. It returns the set prefix
+    which ís normally the same as ns_prefix, but a different buffer.
+    If the prefix cannot be set, because it is already claimed, it returns NULL,
+    unless permit_renaming==true in which case it will modify the prefix and return the modified prefix.
+*/
+const char *xmqAddNamespace(XMQDoc *doq, XMQNodePtr node, const char *ns_prefix, const char *ns_iri);
+
+/**
+    xmqAddNode:
+
+    Create a node under an existing node.
+*/
+XMQReturnNode xmqAddNode(XMQDoc *doq, XMQNodePtr parent, const char *name);
+
+/**
+    xmqAddKeyValue:
+
+    Create a key value under an existing node.
+*/
+XMQReturnNode xmqAddKeyValue(XMQDoc *doq, XMQNodePtr parent, const char *key, const char *value);
+
+/**
+    xmqAddAttribute:
+
+    Create an attribute in an existing node.
+*/
+void xmqSetAttribute(XMQDoc *doq, XMQNodePtr node, const char *key, const char *name);
 
 /**
     xmqGetImplementationDoc:
@@ -558,6 +655,13 @@ void *xmqGetImplementationDoc(XMQDoc *doq);
     Set the underlying implementation doc, could be an xmlDocPtr from libxml2 for example.
 */
 void xmqSetImplementationDoc(XMQDoc *doq, void *doc);
+
+/**
+    xmqClearDoc:
+
+    Clear out, make the document empty.
+*/
+void xmqClearDoc(XMQDoc *doc);
 
 /**
     xmqFreeDoc:
@@ -608,6 +712,7 @@ void xmqFreeOutputSettings(XMQOutputSettings *os);
 void xmqSetAddIndent(XMQOutputSettings *os, int add_indent);
 void xmqSetCompact(XMQOutputSettings *os, bool compact);
 void xmqSetUseColor(XMQOutputSettings *os, bool use_color);
+void xmqSetTrueColor(XMQOutputSettings *os, bool truecolor);
 void xmqSetBackgroundMode(XMQOutputSettings *os, bool bg_dark_mode);
 void xmqSetPreferDoubleQuotes(XMQOutputSettings *os, bool prefer_double_quotes);
 void xmqSetEscapeNewlines(XMQOutputSettings *os, bool escape_newlines);
@@ -616,7 +721,7 @@ void xmqSetEscapeTabs(XMQOutputSettings *os, bool escape_tabs);
 void xmqSetOutputFormat(XMQOutputSettings *os, XMQContentType output_format);
 void xmqSetOmitDecl(XMQOutputSettings *os, bool omit_decl);
 void xmqSetRenderFormat(XMQOutputSettings *os, XMQRenderFormat render_to);
-void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_name);
+void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_spec);
 void xmqSetRenderRaw(XMQOutputSettings *os, bool render_raw);
 void xmqSetRenderOnlyStyle(XMQOutputSettings *os, bool only_style);
 void xmqSetWriterContent(XMQOutputSettings *os, XMQWriter content);
@@ -658,19 +763,40 @@ char *xmqCompactQuote(const char *content);
 const char *xmqDocError(XMQDoc *doc);
 
 /** The error as errno. */
-XMQParseError xmqDocErrno(XMQDoc *doc);
+XMQStatus xmqDocErrno(XMQDoc *doc);
 
 /**
     xmqGetName: get name of node
     @node: Node
 */
-const char *xmqGetName(XMQNode *node);
+const char *xmqGetName(XMQNodePtr node);
 
 /**
     xmqGetContent: get content of element node
     @node: Node
 */
-const char *xmqGetContent(XMQNode *node);
+const char *xmqGetContent(XMQNodePtr node);
+
+/**
+    xmqSetContent: set the raw content of element node
+    @node: Node
+*/
+void xmqSetContent(XMQNodePtr node, const char *raw_content);
+
+/**
+    xmqGetNode:
+    @doc: the xmq doc object
+    @xpath: the location of the content to be returned as a node ptr.
+*/
+XMQNodePtr xmqGetNode(XMQDoc *doc, const char *xpath);
+
+/**
+    xmqGetNodeRel:
+    @doc: the xmq doc object
+    @xpath: the location of the content to be returned as a node ptr.
+    @relative: the xpath is search using this node as the starting point.
+*/
+XMQNodePtr xmqGetNodeRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetInt:
@@ -685,7 +811,7 @@ int32_t xmqGetInt(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as an 32 bit signed integer.
     @relative: the xpath is search using this node as the starting point.
 */
-int32_t xmqGetIntRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+int32_t xmqGetIntRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetLong:
@@ -700,7 +826,7 @@ int64_t xmqGetLong(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as an 64 bit signed integer.
     @relative: the xpath is search using this node as the starting point.
 */
-int64_t xmqGetLongRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+int64_t xmqGetLongRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetDouble:
@@ -715,7 +841,7 @@ double xmqGetDouble(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as double float.
     @relative: the xpath is search using this node as the starting point.
 */
-double xmqGetDoubleRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+double xmqGetDoubleRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetString:
@@ -730,7 +856,7 @@ const char *xmqGetString(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as string.
     @relative: the xpath is search using this node as the starting point.
 */
-const char *xmqGetStringRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+const char *xmqGetStringRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
    xmqForeach: Find all locations matching the xpath.
@@ -751,7 +877,7 @@ int xmqForeach(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_da
 
    Returns the number of hits.
 */
-int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNode *relative);
+int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNodePtr relative);
 
 /**
    xmqReplaceEntity: Replace the selected entity with the supplied content.
@@ -769,7 +895,7 @@ int xmqReplaceEntity(XMQDoc *doq, const char *entity, const char *content);
 
    Returns the number of replacements.
 */
-int xmqReplaceEntityWithNode(XMQDoc *doq, const char *entity, XMQDoc *idoq, XMQNode *inode);
+int xmqReplaceEntityWithNode(XMQDoc *doq, const char *entity, XMQDoc *idoq, XMQNodePtr inode);
 
 /**
     xmqVersion:

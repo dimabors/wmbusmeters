@@ -18,16 +18,19 @@
 #ifndef WMBUS_H
 #define WMBUS_H
 
+#include"access_check.h"
 #include"address.h"
 #include"dvparser.h"
 #include"manufacturers.h"
 #include"serial.h"
 #include"translatebits.h"
-#include"util.h"
+
+#include"wmbus/link_mode.h"
 
 #include<inttypes.h>
 #include<map>
 #include<set>
+#include<unordered_map>
 
 // Check and remove the data link layer CRCs from a wmbus telegram.
 // If the CRCs do not pass the test, return false.
@@ -52,6 +55,7 @@ bool trimCRCsFrameFormatB(std::vector<uchar> &payload);
     X(RTL433,rtl433,false,true,detectRTL433)         \
     X(RTLWMBUS,rtlwmbus,false,true,detectRTLWMBUS)   \
     X(IU880B,iu880b,true,false,detectSKIP)         \
+    X(SOCKET,socket,false,false,detectSKIP)       \
     X(SIMULATION,simulation,false,false,detectSIMULATION)
 
 enum BusDeviceType {
@@ -80,123 +84,20 @@ enum class DeviceMode
 const char *toString(DeviceMode mode);
 DeviceMode toDeviceMode(const char *s);
 
+enum class OutputFormat
+{
+    NONE, PLAIN, TERMINAL, JSON, HTML
+};
+
 bool usesTTY(BusDeviceType t);
 bool usesRTLSDR(BusDeviceType t);
 const char *toString(BusDeviceType t);
 const char *toLowerCaseString(BusDeviceType t);
-BusDeviceType toBusDeviceType(string &t);
+BusDeviceType toBusDeviceType(std::string &t);
 
 void setIgnoreDuplicateTelegrams(bool idt);
 void setDetailedFirst(bool df);
 bool getDetailedFirst();
-
-// In link mode S1, is used when both the transmitter and receiver are stationary.
-// It can be transmitted relatively seldom.
-
-// In link mode T1, the meter transmits a telegram every few seconds or minutes.
-// Suitable for drive-by/walk-by collection of meter values.
-
-// Link mode C1 is like T1 but uses less energy when transmitting due to
-// a different radio encoding. Also significant is:
-// S1/T1 usually uses the A format for the data link layer, more CRCs.
-// C1 usually uses the B format for the data link layer, less CRCs = less overhead.
-
-// The im871a can for example receive C1a, but it is unclear if there are any meters that use it.
-
-#define LIST_OF_LINK_MODES \
-    X(Any,any,--anylinkmode,(~0UL)) \
-    X(MBUS,mbus,--mbus,(1UL<<1))    \
-    X(S1,s1,--s1,      (1UL<<2))    \
-    X(S1m,s1m,--s1m,   (1UL<<3))    \
-    X(S2,s2,--s2,      (1UL<<4))    \
-    X(T1,t1,--t1,      (1UL<<5))    \
-    X(T2,t2,--t2,      (1UL<<6))    \
-    X(C1,c1,--c1,      (1UL<<7))    \
-    X(C2,c2,--c2,      (1UL<<8))    \
-    X(N1a,n1a,--n1a,   (1UL<<9))    \
-    X(N2a,n2a,--n2a,   (1UL<<10))    \
-    X(N1b,n1b,--n1b,   (1UL<<11))    \
-    X(N2b,n2b,--n2b,   (1UL<<12))    \
-    X(N1c,n1c,--n1c,   (1UL<<13))    \
-    X(N2c,n2c,--n2c,   (1UL<<14))    \
-    X(N1d,n1d,--n1d,   (1UL<<15))    \
-    X(N2d,n2d,--n2d,   (1UL<<16))    \
-    X(N1e,n1e,--n1e,   (1UL<<17))    \
-    X(N2e,n2e,--n2e,   (1UL<<18))    \
-    X(N1f,n1f,--n1f,   (1UL<<19))    \
-    X(N2f,n2f,--n2f,   (1UL<<20))    \
-    X(R2a,r2a,--r2a,   (1UL<<21))    \
-    X(R2b,r2b,--r2b,   (1UL<<22))    \
-    X(R2c,r2c,--r2c,   (1UL<<23))    \
-    X(R2d,r2d,--r2d,   (1UL<<24))    \
-    X(R2e,r2e,--r2e,   (1UL<<25))    \
-    X(R2f,r2f,--r2f,   (1UL<<26))    \
-    X(R2g,r2g,--r2g,   (1UL<<27))    \
-    X(R2h,r2h,--r2h,   (1UL<<28))    \
-    X(R2i,r2i,--r2i,   (1UL<<29))    \
-    X(R2j,r2j,--r2j,   (1UL<<30))    \
-    X(LORA,lora,--lora,   (1UL<<31))    \
-    X(UNKNOWN,unknown,----,0x0UL)
-
-enum class LinkMode {
-#define X(name,lcname,option,val) name,
-LIST_OF_LINK_MODES
-#undef X
-};
-
-#define X(name,lcname,option,val) const uint64_t name##_bit = val;
-LIST_OF_LINK_MODES
-#undef X
-
-LinkMode toLinkMode(const char *arg);
-LinkMode isLinkModeOption(const char *arg);
-const char *toString(LinkMode lm);
-
-struct LinkModeSet
-{
-    // Add the link mode to the set of link modes.
-    LinkModeSet &addLinkMode(LinkMode lm);
-    void unionLinkModeSet(LinkModeSet lms);
-    void disjunctionLinkModeSet(LinkModeSet lms);
-    // Does this set support listening to the given link mode set?
-    // If this set is C1 and T1 and the supplied set contains just C1,
-    // then supports returns true.
-    // Or if this set is just T1 and the supplied set contains just C1,
-    // then supports returns false.
-    // Or if this set is just C1 and the supplied set contains C1 and T1,
-    // then supports returns true.
-    // Or if this set is S1 and T1, and the supplied set contains C1 and T1,
-    // then supports returns true.
-    //
-    // It will do a bitwise and of the linkmode bits. If the result
-    // of the and is not zero, then support returns true.
-    bool supports(LinkModeSet lms);
-    // Check if this set contains the given link mode.
-    bool has(LinkMode lm);
-    // Check if all link modes are supported.
-    bool hasAll(LinkModeSet lms);
-    // Check if any link mode has been set.
-    bool empty() { return set_ == 0; }
-    // Clear the set to empty.
-    void clear() { set_ = 0; }
-    // Mark set as all linkmodes!
-    void setAll() { set_ = (int)LinkMode::Any; }
-    // For bit counting etc.
-    int asBits() { return set_; }
-
-    // Return a human readable string.
-    std::string hr();
-
-    LinkModeSet() { }
-    LinkModeSet(uint64_t s) : set_(s) {}
-
-private:
-
-    uint64_t set_ {};
-};
-
-LinkModeSet parseLinkModes(string modes);
-bool isValidLinkModes(string modes);
 
 // A specified bus device is supplied on the command line or in the config file.
 // It has this format "alias=file:type[id](extras):fq:bps:linkmods:CMD(command)"
@@ -219,18 +120,18 @@ struct SpecifiedDevice
     time_t last_alarm {}; // Last time an alarm was sent for this device not being found.
 
     void clear();
-    string str();
-    bool parse(string &s);
-    static bool isLikelyDevice(string &s);
+    std::string str();
+    bool parse(std::string &s);
+    static bool isLikelyDevice(std::string &s);
 };
 
 struct Detected
 {
     SpecifiedDevice specified_device {}; // Device as specified from the command line / config file.
 
-    string found_file; // The device file to use.
-    string found_hex;  // An immediate hex string is supplied.
-    string found_device_id; // An "unique" identifier, typically the id used by the dongle as its own wmbus id, if it transmits.
+    std::string found_file; // The device file to use.
+    std::string found_hex;  // An immediate hex string is supplied.
+    std::string found_device_id; // An "unique" identifier, typically the id used by the dongle as its own wmbus id, if it transmits.
     BusDeviceType found_type {};  // IM871A, AMB8465 etc.
     int found_bps {}; // Serial speed of tty.
     bool found_tty_override {};
@@ -240,7 +141,7 @@ struct Detected
         specified_device = sd;
     }
 
-    void setAsFound(string id, BusDeviceType t, int b, bool to, LinkModeSet clm)
+    void setAsFound(std::string id, BusDeviceType t, int b, bool to, LinkModeSet clm)
     {
         found_device_id = id;
         found_type = t;
@@ -250,7 +151,7 @@ struct Detected
 
     std::string str()
     {
-        return found_file+":"+string(toString(found_type))+"["+found_device_id+"]"+":"+to_string(found_bps)+"/"+to_string(found_tty_override);
+        return found_file+":"+std::string(toString(found_type))+"["+found_device_id+"]"+":"+std::to_string(found_bps)+"/"+std::to_string(found_tty_override);
     }
 };
 
@@ -341,13 +242,12 @@ AFLAuthenticationType fromIntToAFLAuthenticationType(int i);
 const char *toString(AFLAuthenticationType aat);
 int toLen(AFLAuthenticationType aat);
 
-using namespace std;
-
 struct MeterKeys
 {
-    vector<uchar> confidentiality_key;
-    vector<uchar> authentication_key;
-
+    std::vector<uchar> confidentiality_key;
+    std::vector<uchar> authentication_key;
+    std::vector<std::vector<uchar>> default_keys; // Driver-level fallback keys tried when no meter key is configured.
+    
     bool hasConfidentialityKey() { return confidentiality_key.size() > 0; }
     bool hasAuthenticationKey() { return authentication_key.size() > 0; }
 };
@@ -364,7 +264,7 @@ const char *toString(FrameType ft);
 struct AboutTelegram
 {
     // wmbus device used to receive this telegram.
-    string device;
+    std::string device;
     // The device's opinion of the rssi, best effort conversion into the dbm scale.
     // -100 dbm = 0.1 pico Watt to -20 dbm = 10 micro W
     // Measurements smaller than -100 and larger than -10 are unlikely.
@@ -376,7 +276,7 @@ struct AboutTelegram
     // time the telegram was received
     time_t timestamp;
 
-    AboutTelegram(string dv, int rs, LinkMode lm, FrameType t, time_t ts = 0) : device(dv), rssi_dbm(rs), link_mode(lm), type(t), timestamp(ts) {}
+    AboutTelegram(std::string dv, int rs, LinkMode lm, FrameType t, time_t ts = 0) : device(dv), rssi_dbm(rs), link_mode(lm), type(t), timestamp(ts) {}
     AboutTelegram() {}
 };
 
@@ -399,11 +299,12 @@ struct Explanation
 {
     int pos {};
     int len {};
-    string info;
+    std::string info;
+    std::string ixml_parse;
     KindOfData kind {};
     Understanding understanding {};
 
-    Explanation(int p, int l, const string &i, KindOfData k, Understanding u) :
+    Explanation(int p, int l, const std::string &i, KindOfData k, Understanding u) :
         pos(p), len(l), info(i), kind(k), understanding(u) {}
 };
 
@@ -427,9 +328,13 @@ public:
     // If a warning is printed mark this.
     bool triggered_warning {};
 
+    // If additional errors were detected during decoding.
+    // Typically for REQUIRED IXML fields that fail to parse.
+    std::string decoding_errors;
+
     // The different addresses found,
     // the first is the dll_id_mvt, ell_id_mvt, nwl_id_mvt, and the last is the tpl_id_mvt.
-    vector<Address> addresses;
+    std::vector<Address> addresses;
 
     // If decryption failed, set this to true, to prevent further processing.
     bool decryption_failed {};
@@ -444,10 +349,10 @@ public:
     uchar mbus_primary_address; // Single byte address 0-250 for mbus devices.
     uchar mbus_ci; // MBus control information field.
 
-    vector<uchar> dll_a; // A field 6 bytes
+    std::vector<uchar> dll_a; // A field 6 bytes
     // The 6 a field bytes are composed of 4 id bytes, version and type.
     uchar dll_id_b[4] {};    // 4 bytes, address in BCD = 8 decimal 00000000...99999999 digits.
-    vector<uchar> dll_id; // 4 bytes, human readable order.
+    std::vector<uchar> dll_id; // 4 bytes, human readable order.
     uchar dll_version {}; // 1 byte
     uchar dll_type {}; // 1 byte
 
@@ -493,10 +398,10 @@ public:
     int afl_mlen {};
 
     bool must_check_mac {};
-    vector<uchar> afl_mac_b;
+    std::vector<uchar> afl_mac_b;
 
     // TPL
-    vector<uchar>::iterator tpl_start;
+    std::vector<uchar>::iterator tpl_start;
     int tpl_ci {}; // 1 byte
     int tpl_acc {}; // 1 byte
     int tpl_sts {}; // 1 byte
@@ -507,11 +412,11 @@ public:
     int tpl_num_encr_blocks {};
     int tpl_cfg_ext {}; // 1 byte
     int tpl_kdf_selection {}; // 1 byte
-    vector<uchar> tpl_generated_key; // 16 bytes
-    vector<uchar> tpl_generated_mac_key; // 16 bytes
+    std::vector<uchar> tpl_generated_key; // 16 bytes
+    std::vector<uchar> tpl_generated_mac_key; // 16 bytes
 
     bool  tpl_id_found {}; // If set to true, then tpl_id_b contains valid values.
-    vector<uchar> tpl_a; // A field 6 bytes
+    std::vector<uchar> tpl_a; // A field 6 bytes
     // The 6 a field bytes are composed of 4 id bytes, version and type.
     uchar tpl_id_b[4] {}; // 4 bytes
     uchar tpl_mfct_b[2] {}; // 2 bytes
@@ -522,48 +427,49 @@ public:
     // The format signature is used for compact frames.
     int format_signature {};
 
-    vector<uchar> frame; // Content of frame, potentially decrypted.
-    vector<uchar> parsed;  // Parsed bytes with explanations.
+    std::vector<uchar> frame; // Content of frame, potentially decrypted.
+    std::vector<uchar> parsed;  // Parsed bytes with explanations.
     int header_size {}; // Size of headers before the APL content.
     int suffix_size {}; // Size of suffix after the APL content. Usually empty, but can be MACs!
     int mfct_0f_index = -1; // -1 if not found, else index of the 0f byte, if found, inside the difvif data after the header.
     int mfct_1f_index = -1; // -1 if not found, else index of the 1f byte, if found, then there are more records in the next telegram.
     int force_mfct_index = -1; // Force all data after this offset to be mfct specific. Used for meters not using 0f.
-    void extractFrame(vector<uchar> *fr); // Extract to full frame.
-    void extractPayload(vector<uchar> *pl); // Extract frame data containing the measurements, after the header and not the suffix.
-    void extractMfctData(vector<uchar> *pl); // Extract frame data after the DIF 0x0F.
+    void extractFrame(std::vector<uchar> *fr); // Extract to full frame.
+    void extractPayload(std::vector<uchar> *pl); // Extract frame data containing the measurements, after the header and not the suffix.
+    void extractMfctData(std::vector<uchar> *pl); // Extract frame data after the DIF 0x0F.
 
     bool handled {}; // Set to true, when a meter has accepted the telegram.
 
-    bool parseHeader(vector<uchar> &input_frame);
-    bool parse(vector<uchar> &input_frame, MeterKeys *mk, bool warn);
+    bool parseHeader(std::vector<uchar> &input_frame);
+    bool parse(std::vector<uchar> &input_frame, MeterKeys *mk, bool warn);
 
-    bool parseMBUSHeader(vector<uchar> &input_frame);
-    bool parseMBUS(vector<uchar> &input_frame, MeterKeys *mk, bool warn);
+    bool parseMBUSHeader(std::vector<uchar> &input_frame);
+    bool parseMBUS(std::vector<uchar> &input_frame, MeterKeys *mk, bool warn);
 
-    bool parseWMBUSHeader(vector<uchar> &input_frame);
-    bool parseWMBUS(vector<uchar> &input_frame, MeterKeys *mk, bool warn);
+    bool parseWMBUSHeader(std::vector<uchar> &input_frame);
+    bool parseWMBUS(std::vector<uchar> &input_frame, MeterKeys *mk, bool warn);
 
-    bool parseHANHeader(vector<uchar> &input_frame);
-    bool parseHAN(vector<uchar> &input_frame, MeterKeys *mk, bool warn);
+    bool parseHANHeader(std::vector<uchar> &input_frame);
+    bool parseHAN(std::vector<uchar> &input_frame, MeterKeys *mk, bool warn);
 
-    void addAddressMfctFirst(const vector<uchar>::iterator &pos);
-    void addAddressIdFirst(const vector<uchar>::iterator &pos);
+    void addAddressMfctFirst(const std::vector<uchar>::iterator &pos);
+    void addAddressIdFirst(const std::vector<uchar>::iterator &pos);
 
     void print();
 
     // A vector of indentations and explanations, to be printed
     // below the raw data bytes to explain the telegram content.
-    vector<Explanation> explanations;
-    void addExplanationAndIncrementPos(vector<uchar>::iterator &pos, int len, KindOfData k, Understanding u, const char* fmt, ...);
-    void setExplanation(vector<uchar>::iterator &pos, int len, KindOfData k, Understanding u, const char* fmt, ...);
+    std::vector<Explanation> explanations;
+    void addExplanationAndIncrementPos(std::vector<uchar>::iterator &pos, int len, KindOfData k, Understanding u, const char* fmt, ...);
+    void setExplanation(std::vector<uchar>::iterator &pos, int len, KindOfData k, Understanding u, const char* fmt, ...);
     void addMoreExplanation(int pos, const char* fmt, ...);
-    void addMoreExplanation(int pos, string json);
+    void addMoreExplanation(int pos, std::string json);
+    void addIXMLExplanation(int pos, const char *ixml_parse);
 
     // Add an explanation of data inside manufacturer specific data.
     void addSpecialExplanation(int offset, int len, KindOfData k, Understanding u, const char* fmt, ...);
-    void explainParse(string intro, int from);
-    string analyzeParse(OutputFormat o, int *content_length, int *understood_content_length);
+    void explainParse(std::string intro, int from);
+    std::string analyzeParse(OutputFormat o, int *content_length, int *understood_content_length);
 
     bool parserWarns() { return parser_warns_; }
     bool isSimulated() { return is_simulated_; }
@@ -573,12 +479,12 @@ public:
 
     // The actual content of the (w)mbus telegram. The DifVif entries.
     // Mapped from their key for quick access to their offset and content.
-    std::map<std::string,std::pair<int,DVEntry>> dv_entries;
+    std::unordered_map<std::string,std::pair<int,DVEntry>> dv_entries;
 
-    string autoDetectPossibleDrivers();
+    std::string autoDetectPossibleDrivers();
 
     // part of original telegram bytes, only filled if pre-processing modifies it
-    vector<uchar> original;
+    std::vector<uchar> original;
 
 private:
 
@@ -604,17 +510,19 @@ private:
     void printAFL();
     void printTPL();
 
-    bool parse_TPL_72(vector<uchar>::iterator &pos);
-    bool parse_TPL_78(vector<uchar>::iterator &pos);
-    bool parse_TPL_79(vector<uchar>::iterator &pos);
-    bool parse_TPL_7A(vector<uchar>::iterator &pos);
-    bool alreadyDecryptedCBC(vector<uchar>::iterator &pos);
-    bool potentiallyDecrypt(vector<uchar>::iterator &pos);
+    bool parse_TPL_72(std::vector<uchar>::iterator &pos);
+    bool parse_TPL_73(std::vector<uchar>::iterator &pos);
+    bool parse_TPL_78(std::vector<uchar>::iterator &pos);
+    bool parse_TPL_79(std::vector<uchar>::iterator &pos);
+    bool parse_TPL_7A(std::vector<uchar>::iterator &pos);
+    bool parse_TPL_7B(std::vector<uchar>::iterator &pos);
+    bool alreadyDecryptedCBC(std::vector<uchar>::iterator &pos);
+    bool potentiallyDecrypt(std::vector<uchar>::iterator &pos);
     bool parseTPLConfig(std::vector<uchar>::iterator &pos);
-    static string toStringFromELLSN(int sn);
-    static string toStringFromTPLConfig(int cfg);
-    static string toStringFromAFLFC(int fc);
-    static string toStringFromAFLMC(int mc);
+    static std::string toStringFromELLSN(int sn);
+    static std::string toStringFromTPLConfig(int cfg);
+    static std::string toStringFromAFLFC(int fc);
+    static std::string toStringFromAFLMC(int mc);
 
     bool parseShortTPL(std::vector<uchar>::iterator &pos);
     bool parseLongTPL(std::vector<uchar>::iterator &pos);
@@ -623,18 +531,18 @@ private:
                   std::vector<uchar>::iterator to,
                   std::vector<uchar> &mac,
                   std::vector<uchar> &mackey);
-    bool findFormatBytesFromKnownMeterSignatures(std::vector<uchar> *format_bytes);
+
 };
 
 struct SendBusContent
 {
     LinkMode link_mode;
     TelegramFormat format;
-    string bus;
-    string content;
+    std::string bus;
+    std::string content;
 
-    static bool isLikely(const string &s);
-    bool parse(const string &s);
+    static bool isLikely(const std::string &s);
+    bool parse(const std::string &s);
 };
 
 struct Meter;
@@ -655,10 +563,10 @@ struct BusDevice
     // For im871a,amb8465 it is the transmit address.
     // For rtlsdr it is the id set using rtl_eeprom.
     // Not all dongles have this.
-    virtual string getDeviceId() = 0;
+    virtual std::string getDeviceId() = 0;
     // The im871a and amb8465 dongles does have a unique, immutable id as well.
     // Not all dongles have this.
-    virtual string getDeviceUniqueId() = 0;
+    virtual std::string getDeviceUniqueId() = 0;
     // Human readable explanation of this device, eg: /dev/ttysUB0:im871a[12345678]:t1
     virtual std::string hr() = 0;
     virtual bool isSerial() = 0;
@@ -671,8 +579,8 @@ struct BusDevice
     virtual bool canSetLinkModes(LinkModeSet lms) = 0;
     virtual void setLinkModes(LinkModeSet lms) = 0;
     virtual void setDeviceMode(DeviceMode mode) = 0;
-    virtual void onTelegram(function<bool(AboutTelegram&,vector<uchar>)> cb) = 0;
-    virtual bool sendTelegram(LinkMode link_mode, TelegramFormat format, vector<uchar> &content) = 0;
+    virtual void onTelegram(std::function<bool(AboutTelegram&,std::vector<uchar>)> cb) = 0;
+    virtual bool sendTelegram(LinkMode link_mode, TelegramFormat format, std::vector<uchar> &content) = 0;
     virtual SerialDevice *serial() = 0;
     // Return true of the serial has been overridden, usually with stdin or a file.
     virtual bool serialOverride() = 0;
@@ -700,144 +608,147 @@ struct BusDevice
     virtual ~BusDevice() = 0;
 };
 
+
 Detected detectBusDeviceWithFileOrHex(SpecifiedDevice &specified_device,
                                       LinkModeSet default_linkmodes,
-                                      shared_ptr<SerialCommunicationManager> manager);
+                                      std::shared_ptr<SerialCommunicationManager> manager);
 Detected detectBusDeviceWithCommand(SpecifiedDevice &specified_device,
                                     LinkModeSet default_linkmodes,
-                                    shared_ptr<SerialCommunicationManager> handler);
+                                    std::shared_ptr<SerialCommunicationManager> handler);
 
 
-shared_ptr<BusDevice> openIM871A(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openIM170A(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openIU891A(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openIU880B(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openAMB8465(Detected detected,
-                              shared_ptr<SerialCommunicationManager> manager,
-                              shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openAMB3665(Detected detected,
-                                  shared_ptr<SerialCommunicationManager> manager,
-                                  shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openRawTTY(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openHexTTY(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openXmqTTY(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openMBUS(Detected detected,
-                           shared_ptr<SerialCommunicationManager> manager,
-                           shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openRC1180(Detected detected,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
-                               string bin_dir,
+std::shared_ptr<BusDevice> openIM871A(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openIM170A(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openIU891A(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openIU880B(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openAMB8465(Detected detected,
+                              std::shared_ptr<SerialCommunicationManager> manager,
+                              std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openAMB3665(Detected detected,
+                                  std::shared_ptr<SerialCommunicationManager> manager,
+                                  std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openRawTTY(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openHexTTY(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openXmqTTY(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openMBUS(Detected detected,
+                           std::shared_ptr<SerialCommunicationManager> manager,
+                           std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openRC1180(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
+                               std::string bin_dir,
                                bool daemon,
-                               shared_ptr<SerialCommunicationManager> manager,
-                               shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openRTL433(Detected detected,
-                             string bin_dir,
+                               std::shared_ptr<SerialCommunicationManager> manager,
+                               std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openRTL433(Detected detected,
+                             std::string bin_dir,
                              bool daemon,
-                             shared_ptr<SerialCommunicationManager> manager,
-                             shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openCUL(Detected detected,
-                          shared_ptr<SerialCommunicationManager> manager,
-                          shared_ptr<SerialDevice> serial_override);
-shared_ptr<BusDevice> openSimulator(Detected detected,
-                                shared_ptr<SerialCommunicationManager> manager,
-                                shared_ptr<SerialDevice> serial_override);
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openCUL(Detected detected,
+                          std::shared_ptr<SerialCommunicationManager> manager,
+                          std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openSocket(Detected detected,
+                             std::shared_ptr<SerialCommunicationManager> manager,
+                             std::shared_ptr<SerialDevice> serial_override);
+std::shared_ptr<BusDevice> openSimulator(Detected detected,
+                                std::shared_ptr<SerialCommunicationManager> manager,
+                                std::shared_ptr<SerialDevice> serial_override);
 
-string manufacturer(int m_field);
-string mediaType(int a_field_device_type, int m_field);
-string mediaTypeJSON(int a_field_device_type, int m_field);
+std::string manufacturer(int m_field);
+std::string mediaType(int a_field_device_type, int m_field);
+std::string mediaTypeJSON(int a_field_device_type, int m_field);
 bool isCiFieldOfType(int ci_field, CI_TYPE type);
 int ciFieldLength(int ci_field);
 bool isCiFieldManufacturerSpecific(int ci_field);
-string ciType(int ci_field);
-string cType(int c_field);
+std::string ciType(int ci_field);
+std::string cType(int c_field);
 bool isValidWMBusCField(int c_field);
 bool isValidMBusCField(int c_field);
-string ccType(int cc_field);
-string difType(int dif);
+std::string ccType(int cc_field);
+std::string difType(int dif);
 double vifScale(int vif);
-string vifKey(int vif); // E.g. temperature energy power mass_flow volume_flow
-string vifUnit(int vif); // E.g. m3 c kwh kw MJ MJh
-string vifType(int vif); // Long description
-string vifeType(int dif, int vif, int vife); // Long description
+std::string vifKey(int vif); // E.g. temperature energy power mass_flow volume_flow
+std::string vifUnit(int vif); // E.g. m3 c kwh kw MJ MJh
+std::string vifType(int vif); // Long description
+std::string vifeType(int dif, int vif, int vife); // Long description
 
 // Decode only the standard defined bits in the tpl status byte. Ignore the top 3 bits.
 // Return "OK" if sts == 0
-string decodeTPLStatusByteOnlyStandardBits(uchar sts);
+std::string decodeTPLStatusByteOnlyStandardBits(uchar sts);
 // Decode the standard bits and report the top 3 bits if set as for example: UNKNOWN_0x80
 // Return "OK" if sts == 0
-string decodeTPLStatusByteNoMfct(uchar sts);
+std::string decodeTPLStatusByteNoMfct(uchar sts);
 // Decode the standard bits and translate the top 3 bits if set.
 // Return "OK" if sts == 0
-string decodeTPLStatusByteWithMfct(uchar sts, Translate::Lookup &lookup);
+std::string decodeTPLStatusByteWithMfct(uchar sts, Translate::Lookup &lookup);
 
 int difLenBytes(int dif);
 MeasurementType difMeasurementType(int dif);
 
-string linkModeName(LinkMode link_mode);
-string measurementTypeName(MeasurementType mt);
+std::string measurementTypeName(MeasurementType mt);
 
 enum FrameStatus { PartialFrame, FullFrame, ErrorInFrame, TextAndNotFrame };
 const char *toString(FrameStatus fs);
 
 
-FrameStatus checkWMBusFrame(vector<uchar> &data,
+FrameStatus checkWMBusFrame(std::vector<uchar> &data,
                             size_t *frame_length,
                             int *payload_len_out,
                             int *payload_offset,
                             bool only_test);
 
-FrameStatus checkMBusFrame(vector<uchar> &data,
+FrameStatus checkMBusFrame(std::vector<uchar> &data,
                            size_t *frame_length,
                            int *payload_len_out,
                            int *payload_offset,
                            bool only_test);
 
-AccessCheck reDetectDevice(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
+AccessCheck reDetectDevice(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
 
-AccessCheck detectAUTO(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectAMB8465AMB3665(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-//AccessCheck detectAMB3665(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectCUL(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectD1TC(Detected *detected, shared_ptr<SerialCommunicationManager> manager);
-AccessCheck detectIM871AIM170A(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectIU891A(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectIU880B(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectRAWTTY(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectMBUS(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectRC1180(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectRTL433(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectRTLWMBUS(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
-AccessCheck detectSKIP(Detected *detected, shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectAUTO(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectAMB8465AMB3665(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+//AccessCheck detectAMB3665(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectCUL(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectD1TC(Detected *detected, std::shared_ptr<SerialCommunicationManager> manager);
+AccessCheck detectIM871AIM170A(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectIU891A(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectIU880B(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectRAWTTY(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectMBUS(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectRC1180(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectRTL433(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectRTLWMBUS(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
+AccessCheck detectSKIP(Detected *detected, std::shared_ptr<SerialCommunicationManager> handler);
 
 // Try to factory reset an AMB8465/AMB3665 by trying all possible serial speeds and
 // restore to factory settings.
-AccessCheck factoryResetAMB8465(string tty, shared_ptr<SerialCommunicationManager> handler, int *was_baud);
-AccessCheck factoryResetAMB3665(string tty, shared_ptr<SerialCommunicationManager> handler, int *was_baud);
+AccessCheck factoryResetAMB8465(std::string tty, std::shared_ptr<SerialCommunicationManager> handler, int *was_baud);
+AccessCheck factoryResetAMB3665(std::string tty, std::shared_ptr<SerialCommunicationManager> handler, int *was_baud);
 
-Detected detectBusDeviceOnTTY(string tty,
-                              set<BusDeviceType> probe_for,
+Detected detectBusDeviceOnTTY(std::string tty,
+                              std::set<BusDeviceType> probe_for,
                               LinkModeSet desired_linkmodes,
-                              shared_ptr<SerialCommunicationManager> handler,
-                              string bps = string());
+                              std::shared_ptr<SerialCommunicationManager> handler,
+                              std::string bps = std::string());
 
 // Remember meters id/mfct/ver/type combos that we should only warn once for.
-bool warned_for_telegram_before(Telegram *t, vector<uchar> &dll_a);
+bool warned_for_telegram_before(Telegram *t, std::vector<uchar> &dll_a);
 
 ////////////////// MBUS
 

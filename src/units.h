@@ -301,8 +301,8 @@ private:
 
 bool canConvert(Unit from, Unit to);
 double convert(double v, Unit from, Unit to);
-Unit whenMultiplied(Unit left, Unit right);
-double multiply(double l, Unit left, double r, Unit right);
+SIUnit whenMultiplied(SIUnit left, SIUnit right);
+double multiply(double l, SIUnit left, double r, SIUnit right);
 
 // Used to convert protocol KWH to KVARH/KVA, strictly speaking
 // not a valid conversion, but permitted to work around limitations in the mbus protocol usage.
@@ -315,7 +315,6 @@ const SIUnit &toSIUnit(Unit u);
 const char *toString(Quantity q);
 bool isQuantity(Unit u, Quantity q);
 Quantity toQuantity(Unit u);
-void assertQuantity(Unit u, Quantity q);
 Unit defaultUnitForQuantity(Quantity q);
 std::string unitToStringHR(Unit u);
 std::string unitToStringLowerCase(Unit u);

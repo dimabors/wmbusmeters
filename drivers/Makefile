@@ -3,17 +3,16 @@ $(shell mkdir -p build/test)
 
 PROG?=../build/wmbusmeters
 
-database:
-	@./generate.sh $(PROG)
+database: pretty
+	@LC_ALL=C ./generate.sh $(PROG)
 
 web:
 	@mkdir -p ../build/web
-	@./generate_index.sh
+	@LC_ALL=C ./generate_index.sh
 
 tests:
-	@echo -n "// Generated " > build/generated_tests.xmq
-	@date +%Y-%m-%d_%H:%M >> build/generated_tests.xmq
-	@for i in $(wildcard src/*) ; do xmq $$i select /driver/tests/test to-xmq >> build/generated_tests.xmq; done
+	@echo "// Generated" > build/generated_tests.xmq
+	@SOURCES=$$(ls src | LC_ALL=C sort) ; for i in $$SOURCES ; do xmq src/$$i select /driver/tests/test to-xmq >> build/generated_tests.xmq; done
 
 install: database tests
 	@grep -v "// Generated " < build/generated_database.cc > build/a

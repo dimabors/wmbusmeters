@@ -16,11 +16,11 @@
 */
 
 #include"address.h"
-#include"aes.h"
-#include"aescmac.h"
 #include"cmdline.h"
 #include"config.h"
+#include"drivers.h"
 #include"formula_implementation.h"
+#include"manufacturers.h"
 #include"meters.h"
 #include"printer.h"
 #include"serial.h"
@@ -30,6 +30,13 @@
 #include"dvparser.h"
 #include"xmq.h"
 
+#include"crypto/aes.h"
+#include"crypto/aescmac.h"
+#include"crypto/crc16.h"
+
+#include"utils/signal_handling.h"
+
+#include<assert.h>
 #include<string.h>
 #include<set>
 
@@ -52,6 +59,7 @@ bool verbose_ = false;
     X(device_parsing) \
     X(meters)         \
     X(months)         \
+    X(years)          \
     X(aes)            \
     X(sbc)            \
     X(hex)            \
@@ -77,6 +85,8 @@ bool verbose_ = false;
     X(formulas_errors)                          \
     X(formulas_dventries)                       \
     X(formulas_stringinterpolation)             \
+    X(formulas_rounding)                        \
+    X(formulas_extended_ops)                    \
 
 #define X(t) void test_##t();
 LIST_OF_TESTS
@@ -97,6 +107,8 @@ bool test(const char *test_name, const char *pattern)
 
 int main(int argc, char **argv)
 {
+    prepareBuiltinDrivers();
+
     const char *pattern = NULL;
 
     int i = 1;
@@ -188,7 +200,7 @@ void test_crc()
     }
 }
 
-bool tst_parse(const char *data, std::map<std::string,std::pair<int,DVEntry>> *dv_entries, int testnr)
+bool tst_parse(const char *data, std::unordered_map<std::string,std::pair<int,DVEntry>> *dv_entries, int testnr)
 {
     debug("\n\nTest nr %d......\n\n", testnr);
     bool b;
@@ -202,11 +214,13 @@ bool tst_parse(const char *data, std::map<std::string,std::pair<int,DVEntry>> *d
     return b;
 }
 
-bool tst_ixmlparse(const char *hex, const char *grammar, std::map<std::string,std::pair<int,DVEntry>> *dv_entries, int testnr)
+bool tst_ixmlparse(const char *hex, const char *grammar, std::unordered_map<std::string,std::pair<int,DVEntry>> *dv_entries, int testnr)
 {
     debug("\n\nTest ixml parse nr %d......\n\n", testnr);
     bool b;
-    XMQDoc *ixml = xmqNewDoc();
+    XMQReturnDoc rd = xmqNewDoc();
+    assert(rd.status == XMQ_OK);
+    XMQDoc *ixml = rd.doc;
     b = xmqParseBufferWithType(ixml, grammar, NULL, NULL, XMQ_CONTENT_IXML, 0);
     if (!b) {
         fprintf(stderr, "Failed to parse IXML grammar: %s\n", grammar);
@@ -225,7 +239,7 @@ bool tst_ixmlparse(const char *hex, const char *grammar, std::map<std::string,st
     return b;
 }
 
-void tst_double(map<string,pair<int,DVEntry>> &values, const char *key, double v, int testnr)
+void tst_double(unordered_map<string,pair<int,DVEntry>> &values, const char *key, double v, int testnr)
 {
     int offset;
     double value;
@@ -239,7 +253,7 @@ void tst_double(map<string,pair<int,DVEntry>> &values, const char *key, double v
     }
 }
 
-void tst_string(map<string,pair<int,DVEntry>> &values, const char *key, const char *v, int testnr)
+void tst_string(unordered_map<string,pair<int,DVEntry>> &values, const char *key, const char *v, int testnr)
 {
     int offset;
     string value;
@@ -252,7 +266,7 @@ void tst_string(map<string,pair<int,DVEntry>> &values, const char *key, const ch
     }
 }
 
-void tst_date(map<string,pair<int,DVEntry>> &values, const char *key, string date_expected, int testnr)
+void tst_date(unordered_map<string,pair<int,DVEntry>> &values, const char *key, string date_expected, int testnr)
 {
     int offset;
     struct tm value;
@@ -269,9 +283,33 @@ void tst_date(map<string,pair<int,DVEntry>> &values, const char *key, string dat
     }
 }
 
+void tst_no_key(unordered_map<string,pair<int,DVEntry>> &values, const char *key, int testnr)
+{
+    if (hasKey(&values, key))
+    {
+        fprintf(stderr, "Error in dvparser testnr %d: key %s should not exist\n", testnr, key);
+    }
+}
+
+void tst_subunit(unordered_map<string,pair<int,DVEntry>> &values, const char *key, int expected_subunit, int testnr)
+{
+    if (!hasKey(&values, key))
+    {
+        fprintf(stderr, "Error in dvparser testnr %d: key %s does not exist\n", testnr, key);
+        return;
+    }
+
+    int got = values[key].second.subunit_nr.intValue();
+    if (got != expected_subunit)
+    {
+        fprintf(stderr, "Error in dvparser testnr %d: key %s subunit %d but expected %d\n",
+                testnr, key, got, expected_subunit);
+    }
+}
+
 void test_dvparser()
 {
-    map<string,pair<int,DVEntry>> dv_entries;
+    unordered_map<string,pair<int,DVEntry>> dv_entries;
 
     int testnr = 1;
     tst_parse("2F 2F 0B 13 56 34 12 8B 82 00 93 3E 67 45 23 0D FD 10 0A 30 31 32 33 34 35 36 37 38 39 0F 88 2F", &dv_entries, testnr);
@@ -289,17 +327,141 @@ void test_dvparser()
     tst_parse("0C1348550000426CE1F14C130000000082046C21298C0413330000008D04931E3A3CFE3300000033000000330000003300000033000000330000003300000033000000330000003300000033000000330000004300000034180000046D0D0B5C2B03FD6C5E150082206C5C290BFD0F0200018C4079678885238310FD3100000082106C01018110FD610002FD66020002FD170000", &dv_entries, testnr);
     tst_double(dv_entries, "0C13", 5.548, testnr);
     tst_date(dv_entries, "426C", "2127-01-01 00:00:00", testnr); // 2127-jan-1
+
     tst_date(dv_entries, "82106C", "2000-01-01 00:00:00", testnr); // 2000-jan-1
 
     testnr++;
     dv_entries.clear();
     tst_parse("426C FE04", &dv_entries, testnr);
-    tst_date(dv_entries, "426C", "2007-04-30 00:00:00", testnr); // 2010-dec-31
+    tst_date(dv_entries, "426C", "2007-04-30 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    tst_parse("446C 0C0DD62C", &dv_entries, testnr);
+    tst_date(dv_entries, "446C", "2022-12-22 13:12:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    tst_parse("466C 2D0C0DD62C33", &dv_entries, testnr);
+    tst_date(dv_entries, "466C", "2022-12-22 13:12:45", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Base value + inverse compact profile, increment mode "increments" (01b), 1 month spacing.
+    // spacing control 0x72: mode=01b, spacing unit=11b (days/month), element size=dif low nibble 0x2.
+    // spacing value 0xFE: one month.
+    // base=1.000, deltas=0.005 and 0.007 => older values 0.995 and 0.988.
+    tst_parse("0213E803 0D9313 06 72FE05000700", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.995, testnr);
+    tst_double(dv_entries, "8201137F77", 0.988, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Base value + inverse compact profile, increment mode "decrements" (10b), 1 month spacing.
+    // base=1.000, deltas=0.005 and 0.007 => older values 1.005 and 1.012.
+    tst_parse("0213E803 0D9313 06 B2FE05000700", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 1.005, testnr);
+    tst_double(dv_entries, "8201137F77", 1.012, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Base value + inverse compact profile, increment mode "signed difference" (11b), 1 month spacing.
+    // difference = younger - older. base=1.000, diff=-0.005 then +0.007 => older values 1.005 and 0.998.
+    tst_parse("0213E803 0D9313 06 F2FEFBFF0700", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 1.005, testnr);
+    tst_double(dv_entries, "8201137F77", 0.998, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // spacing value 0xFD with spacing unit 11b means half-month spacing (Annex F.8).
+    tst_parse("0213E803 0D9313 04 72FD0500", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.995, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // spacing value 0 means values are an array (not spaced in time); parser should still decode values.
+    tst_parse("0213E803 0D9313 04 72000500", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.995, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // spacing value 251 is reserved and compact profile shall be rejected.
+    tst_parse("0213E803 0D9313 04 72FB0500", &dv_entries, testnr);
+    tst_no_key(dv_entries, "42137F77", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // spacing value 253 is reserved for spacing units 00b..10b (half-month only valid with 11b).
+    // compact profile shall be rejected for this invalid combination.
+    tst_parse("0213E803 0D9313 04 52FD0500", &dv_entries, testnr);
+    tst_no_key(dv_entries, "42137F77", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Absolute mode (00b) with binary signed values: no delta reconstruction is performed.
+    // Value 0xFFFB should decode as -5 (with energy scaling => -0.005 kWh).
+    tst_parse("0213E803 0D9313 04 32FEFBFF", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", -0.005, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Increments mode: first delta valid, second delta is invalid (all-FF for unsigned),
+    // so processing shall stop and later slots shall be ignored.
+    tst_parse("0213E803 0D9313 08 72FE0500FFFF0700", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.995, testnr);
+    tst_no_key(dv_entries, "8201137F77", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Signed-difference mode: first difference valid, second is illegal signed minimum
+    // (0x8000), so processing shall stop from that slot onward.
+    tst_parse("0213E803 0D9313 08 F2FE010000800700", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.999, testnr);
+    tst_no_key(dv_entries, "8201137F77", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Inverse compact profile with spacing value 2 and spacing unit days.
+    // Base date 2024-01-10 => generated history dates 2024-01-08 and 2024-01-06.
+    tst_parse("820413E803 82046C0A31 8D04931306720205000300", &dv_entries, testnr);
+    tst_double(dv_entries, "C204137F77", 0.995, testnr);
+    tst_double(dv_entries, "8205137F77", 0.992, testnr);
+    tst_date(dv_entries, "C2046C7F77", "2024-01-08 00:00:00", testnr);
+    tst_date(dv_entries, "82056C7F77", "2024-01-06 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Inverse compact profile with half-month spacing (253 + days/month unit).
+    // Base date 2024-01-16 => generated history dates 2024-01-01 and 2023-12-16.
+    tst_parse("0213E803 026C1031 0D9313 06 72FD05000300", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.995, testnr);
+    tst_double(dv_entries, "8201137F77", 0.992, testnr);
+    tst_date(dv_entries, "426C7F77", "2024-01-01 00:00:00", testnr);
+    tst_date(dv_entries, "82016C7F77", "2023-12-16 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Compact profile with register numbers (VIFE 1Eh): first profile value belongs to next register.
+    // Base storage/register #8 with base date 2024-01-16 and base value 1000.
+    // Profile values 1001 and 1002 shall map to storage/register #9 and #10 in forward order.
+    tst_parse("820413E803 82046C1031 8D04931E0632FEE903EA03", &dv_entries, testnr);
+    tst_double(dv_entries, "C204137F77", 1.001, testnr);
+    tst_double(dv_entries, "8205137F77", 1.002, testnr);
+    tst_date(dv_entries, "C2046C7F77", "2024-02-16 00:00:00", testnr);
+    tst_date(dv_entries, "82056C7F77", "2024-03-16 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // spacing value 0 means array mode; spacing unit addresses column number.
+    // Here spacing unit 01b => column 2, which maps to subunit offset +1.
+    tst_parse("0213E803 0D9313 04 12000500", &dv_entries, testnr);
+    tst_double(dv_entries, "42137F77", 0.005, testnr);
+    tst_subunit(dv_entries, "42137F77", 1, testnr);
 }
 
 void test_ixmlparser()
 {
-    map<string,pair<int,DVEntry>> dv_entries;
+    unordered_map<string,pair<int,DVEntry>> dv_entries;
 
     int testnr = 1;
     tst_ixmlparse("10351F0400",
@@ -1073,7 +1235,7 @@ void test_month(int y, int m, int day, int mdiff, string from, string to)
         os != to)
     {
         printf("ERROR! Expected %s + %d months should be %s\n"
-               "But got %s - 11 = %s\n",
+               "But got %s != %s\n",
                from.c_str(), mdiff, to.c_str(),
                s.c_str(), os.c_str());
     }
@@ -1095,6 +1257,45 @@ void test_months()
     test_month(2001,02,28, -12, "2001-02-28", "2000-02-29");
     // 2100 is not a leap year since %100=0 and not overriden %400 != 0.
     test_month(2000,02,29, 12*100, "2000-02-29", "2100-02-28");
+}
+
+void test_year(int y, int m, int day, int ydiff, string from, string to)
+{
+    struct tm date {};
+    date.tm_year  = y-1900;
+    date.tm_mon   = m-1;
+    date.tm_mday  = day;
+
+    string s = strdate(&date);
+
+    struct tm d;
+    d = date;
+    addYears(&d, ydiff);
+
+    string os = strdate(&d);
+
+    if (s != from ||
+        os != to)
+    {
+        printf("ERROR! Expected %s + %d years should be %s\n"
+               "But got %s != %s\n",
+               from.c_str(), ydiff, to.c_str(),
+               s.c_str(), os.c_str());
+    }
+}
+
+
+void test_years()
+{
+    test_year(2020,12,31, 2, "2020-12-31", "2022-12-31");
+    test_year(2020,12,31, -2, "2020-12-31", "2018-12-31");
+    test_year(1900,01,01, 222, "1900-01-01", "2122-01-01");
+    // 2020 was a leap year.
+    test_year(2021,02,28, -1, "2021-02-28", "2020-02-29");
+    // 2000 was a leap year %100=0 but %400=0 overrides.
+    test_year(2001,02,28, -1, "2001-02-28", "2000-02-29");
+    // 2100 is not a leap year since %100=0 and not overriden %400 != 0.
+    test_year(2000,02,29, 100, "2000-02-29", "2100-02-28");
 }
 
 // Vatten    multical21:BUS1:c1 12345678 KEY
@@ -1232,7 +1433,7 @@ void test_meters()
     */
 
     testm("multical21:c1", true,
-          "multical21", // driver
+          "kamwater", // driver
           "", // extras
           "", // bus
           "0", // bps
@@ -1243,7 +1444,7 @@ void test_meters()
         "driver=multical21:c1\n"
         "id=01234567\n";
     testc("meter/multical21:c1", config_content,
-          "multical21", // driver
+          "kamwater", // driver
           "", // extras
           "", // bus
           "0", // bps
@@ -1452,8 +1653,8 @@ void test_translate()
             },
         };
 
-   Translate::Lookup lookup3 =
-       {
+    Translate::Lookup lookup3 =
+        {
             {
                 {
                     "NO_FLAGS",
@@ -1470,6 +1671,33 @@ void test_translate()
                 },
             },
         };
+
+    Translate::Lookup lookup4 =
+        Translate::Lookup()
+        .add(Translate::Rule("CURRENT_ALARMS_GENERAL", Translate::MapType::BitToString)
+             .set(TriggerBits(0x000080))
+             .set(MaskBits(0xFAA000))
+             .add(Translate::Map(0x008000, "general_alarm"))
+             .add(Translate::Map(0x002000, "general_alarm"))
+             .add(Translate::Map(0x800000, "general_alarm"))
+             .add(Translate::Map(0x400000, "general_alarm"))
+             .add(Translate::Map(0x200000, "general_alarm"))
+             .add(Translate::Map(0x100000, "general_alarm"))
+             .add(Translate::Map(0x080000, "general_alarm"))
+             .add(Translate::Map(0x020000, "general_alarm"))
+            )
+        .add(Translate::Rule("CURRENT_ALARMS", Translate::MapType::BitToString)
+             .set(MaskBits(0xFAA000))
+             .set(DefaultMessage("no_alarm"))
+             .add(Translate::Map(0x008000, "leakage"))
+             .add(Translate::Map(0x002000, "meter_blocked"))
+             .add(Translate::Map(0x800000, "back_flow"))
+             .add(Translate::Map(0x400000, "underflow"))
+             .add(Translate::Map(0x200000, "overflow"))
+             .add(Translate::Map(0x100000, "submarine"))
+             .add(Translate::Map(0x080000, "sensor_fraud"))
+             .add(Translate::Map(0x020000, "mechanical_fraud"))
+            );
 
     string s, e;
     uint8_t bits;
@@ -1522,6 +1750,33 @@ void test_translate()
     if (s != e)
     {
         printf("ERROR lookup3 0x%02x expected \"%s\" but got \"%s\"\n", bits, e.c_str(), s.c_str());
+    }
+
+    uint64_t alarm_bits = 0x000080;
+    s = lookup4.translate(alarm_bits);
+    e = "no_alarm";
+    if (s != e)
+    {
+        printf("ERROR lookup4 0x%06llx expected \"%s\" but got \"%s\"\n",
+               (unsigned long long)alarm_bits, e.c_str(), s.c_str());
+    }
+
+    alarm_bits = 0x402000;
+    s = lookup4.translate(alarm_bits);
+    e = "meter_blocked underflow";
+    if (s != e)
+    {
+        printf("ERROR lookup4 0x%06llx expected \"%s\" but got \"%s\"\n",
+               (unsigned long long)alarm_bits, e.c_str(), s.c_str());
+    }
+
+    alarm_bits = 0x402080;
+    s = lookup4.translate(alarm_bits);
+    e = "general_alarm meter_blocked underflow";
+    if (s != e)
+    {
+        printf("ERROR lookup4 0x%06llx expected \"%s\" but got \"%s\"\n",
+               (unsigned long long)alarm_bits, e.c_str(), s.c_str());
     }
 
 }
@@ -1597,6 +1852,25 @@ void test_dvs()
     if (dvk.dif() != 0x0b || dvk.vif() != 0x2b || dvk.hasDifes() || dvk.hasVifes())
     {
         printf("ERROR test_dvs 1\n");
+    }
+
+    string third = vifeType(0, 0xef, 0x01);
+    if (third != "Reserved for future third extension table")
+    {
+        printf("ERROR test_dvs 2 expected \"Reserved for future third extension table\" got \"%s\"\n", third.c_str());
+    }
+
+    // High continuation bit should not affect the textual VIFE code.
+    string third_cont = vifeType(0, 0xef, 0x81);
+    if (third_cont != "Reserved for future third extension table")
+    {
+        printf("ERROR test_dvs 3 expected \"Reserved for future third extension table\" got \"%s\"\n", third_cont.c_str());
+    }
+
+    string mfct = vifeType(0, 0xff, 0x22);
+    if (mfct != "Manufacturer specific")
+    {
+        printf("ERROR test_dvs 4 expected \"Manufacturer specific\" got \"%s\"\n", mfct.c_str());
     }
 }
 
@@ -2396,7 +2670,7 @@ void test_formulas_building_meters()
         mi.parse("testur", "multical21", "12345678", "");
         shared_ptr<Meter> meter = createMeter(&mi);
         FieldInfo *fi_flow = meter->findFieldInfo("flow_temperature", Quantity::Temperature);
-        FieldInfo *fi_ext = meter->findFieldInfo("external_temperature", Quantity::Temperature);
+        FieldInfo *fi_ext = meter->findFieldInfo("min_external_temperature_last_month", Quantity::Temperature);
         assert(fi_flow != NULL);
         assert(fi_ext != NULL);
 
@@ -2621,6 +2895,9 @@ void test_formulas_datetimes()
     test_datetime(f.get(), "'2021-01-31' + 24month", 2023, 1, 31);
     test_datetime(f.get(), "'2021-01-31' + 22month", 2022, 11, 30);
 
+    test_datetime(f.get(), "'2021-01-31' + 2y", 2023, 01, 31);
+    test_datetime(f.get(), "'2000-01-01' + 24y + 5month + 3d", 2024, 6, 4);
+
     // 2020 was a leap year.
     test_datetime(f.get(), "'2021-02-28' -12month", 2020,2,29);
     // 2000 was a leap year %100=0 but %400=0 overrides.
@@ -2833,6 +3110,67 @@ void test_formulas_stringinterpolation()
                s.c_str());
     }
 
+}
+
+void test_formulas_rounding()
+{
+    FormulaImplementation fi;
+
+    test_formula_value(&fi, NULL, "round(100.542 kwh)", 101, Unit::KWH);
+    test_formula_value(&fi, NULL, "round(100.492 kwh)", 100, Unit::KWH);
+}
+
+void test_formulas_extended_ops()
+{
+    FormulaImplementation fi;
+
+    test_formula_value(&fi, NULL, "7counter % 4counter", 3, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "2counter ** 3counter", 8, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter << 4counter", 48, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "48counter >> 4counter", 3, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "floor(100.999 kwh)", 100, Unit::KWH);
+    test_formula_value(&fi, NULL, "ceil(100.001 kwh)", 101, Unit::KWH);
+
+    // Comparison operators — return 1.0 (true) or 0.0 (false)
+    test_formula_value(&fi, NULL, "3counter == 3counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter == 4counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter != 4counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter != 3counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "2counter < 3counter",  1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter < 3counter",  0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "4counter < 3counter",  0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter > 2counter",  1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter > 3counter",  0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "2counter > 3counter",  0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter <= 3counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "2counter <= 3counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "4counter <= 3counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter >= 3counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "3counter >= 2counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "2counter >= 3counter", 0, Unit::COUNTER);
+
+    // Bitwise operators
+    test_formula_value(&fi, NULL, "12counter & 10counter",  8, Unit::COUNTER); // 1100 & 1010 = 1000
+    test_formula_value(&fi, NULL, "12counter | 10counter", 14, Unit::COUNTER); // 1100 | 1010 = 1110
+    test_formula_value(&fi, NULL, "12counter ^ 10counter",  6, Unit::COUNTER); // 1100 ^ 1010 = 0110
+
+    // Logical operators
+    test_formula_value(&fi, NULL, "1counter && 1counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "1counter && 0counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "0counter && 1counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "0counter && 0counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "1counter || 0counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "0counter || 1counter", 1, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "0counter || 0counter", 0, Unit::COUNTER);
+    test_formula_value(&fi, NULL, "1counter || 1counter", 1, Unit::COUNTER);
+
+    // Combined: check mkradio3 year_rollover logic directly
+    // curr_month(4) < prev_month(12) => 1 => rollover
+    test_formula_value(&fi, NULL, "(4counter < 12counter) || ((4counter == 12counter) && (27counter < 31counter))", 1, Unit::COUNTER);
+    // same month, same day => 0 => no rollover
+    test_formula_value(&fi, NULL, "(12counter < 12counter) || ((12counter == 12counter) && (31counter < 31counter))", 0, Unit::COUNTER);
+    // same month, curr_day > prev_day => 0 => no rollover
+    test_formula_value(&fi, NULL, "(12counter < 12counter) || ((12counter == 12counter) && (31counter < 15counter))", 0, Unit::COUNTER);
 }
 
 void test_dynamic_loading()

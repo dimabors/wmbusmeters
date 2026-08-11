@@ -15,15 +15,16 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
-#include"wmbus_cul.h"
 #include"serial.h"
+#include"util.h"
 
 #include<assert.h>
 #include<fcntl.h>
-#include<grp.h>
 #include<pthread.h>
 #include<semaphore.h>
 #include<string.h>
@@ -37,7 +38,7 @@ using namespace std;
 #define SET_LINK_MODE 1
 #define SET_X01_MODE 2
 
-struct WMBusCUL : public virtual BusDeviceCommonImplementation
+struct WMBusCUL : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -156,7 +157,7 @@ bool WMBusCUL::deviceSetLinkModes(LinkModeSet lms)
     if (!canSetLinkModes(lms))
     {
         string modes = lms.hr();
-        error("(cul) setting link mode(s) %s is not supported\n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(cul) setting link mode(s) %s is not supported\n", modes.c_str());
     }
 
     {
@@ -202,7 +203,7 @@ bool WMBusCUL::deviceSetLinkModes(LinkModeSet lms)
     if (!ok)
     {
         string modes = lms.hr();
-        error("(cul) setting link mode(s) %s is not supported for this cul device!\n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(cul) setting link mode(s) %s is not supported for this cul device!\n", modes.c_str());
     }
 
     // X01 - start the receiver in normal mode
@@ -294,11 +295,7 @@ FrameStatus WMBusCUL::checkCULFrame(vector<uchar> &data,
 {
     if (data.size() == 0) return PartialFrame;
 
-    if (isDebugEnabled())
-    {
-        string s  = safeString(data);
-        debug("(cul) checkCULFrame \"%s\"\n", s.c_str());
-    }
+    debug("(cul) checkCULFrame \"%s\"\n", safeString(data).c_str());
 
     size_t eolp = 0;
     // Look for end of line
@@ -340,11 +337,7 @@ FrameStatus WMBusCUL::checkCULFrame(vector<uchar> &data,
     // Calculate dBm according to datasheet of CC1101 SWRS061I page 44
     *rssi_dbm = rssi_raw/2 - 74;
 
-    if (isDebugEnabled())
-    {
-        debug("(cul) checkCULFrame RSSI_RAW=%d\n", rssi_raw);
-        debug("(cul) checkCULFrame LQI=%d\n", lqi);
-    }
+    debug("(cul) checkCULFrame RSSI_RAW=%d\n(cul) checkCULFrame LQI=%d\n", rssi_raw, lqi);
 
     if (data[1] == 'Y')
     {
@@ -436,7 +429,7 @@ AccessCheck detectCUL(Detected *detected, shared_ptr<SerialCommunicationManager>
 
         // get the version string: "V 1.67 nanoCUL868" or similar
         vector<uchar> msg(3);
-        msg[0] = CMD_GET_VERSION; // V
+        msg[0] = 0x56; // V
         msg[1] = 0x0d;
         msg[2] = 0x0a;
 

@@ -15,17 +15,19 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"rtlsdr.h"
 #include"serial.h"
 #include"shell.h"
+#include"util.h"
 
 #include<assert.h>
 #include<algorithm>
 #include<fcntl.h>
-#include<grp.h>
 #include<pthread.h>
 #include<semaphore.h>
 #include<string.h>
@@ -37,7 +39,7 @@
 
 using namespace std;
 
-struct WMBusRTLWMBUS : public virtual BusDeviceCommonImplementation
+struct WMBusRTLWMBUS : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -102,7 +104,7 @@ shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
     bool ok = parseExtras(detected.specified_device.extras, &extras);
     if (!ok)
     {
-        error("(rtlwmbus) invalid extra parameters to rtlwmbus (%s)\n", detected.specified_device.extras.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(rtlwmbus) invalid extra parameters to rtlwmbus (%s)\n", detected.specified_device.extras.c_str());
     }
     string ppm = "";
     if (extras.size() > 0)
@@ -137,7 +139,7 @@ shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
         {
             if (daemon)
             {
-                error("(rtlwmbus) error: when starting as daemon, wmbusmeters looked for %s/rtl_sdr and %s/rtl_sdr, but found neither!\n",
+                error(EXIT_BUS_DEVICE_ERROR, "(rtlwmbus) error: when starting as daemon, wmbusmeters looked for %s/rtl_sdr and %s/rtl_sdr, but found neither!\n",
                       bin_dir.c_str(), "/usr/bin");
             }
             else
@@ -151,7 +153,7 @@ shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
         {
             if (daemon)
             {
-                error("(rtlwmbus) error: when starting as daemon, wmbusmeters looked for %s/rtl_wmbus and %s/rtl_wmbus, but found neither!\n",
+                error(EXIT_BUS_DEVICE_ERROR, "(rtlwmbus) error: when starting as daemon, wmbusmeters looked for %s/rtl_wmbus and %s/rtl_wmbus, but found neither!\n",
                       bin_dir.c_str(), "/usr/bin");
             }
             else
@@ -175,7 +177,7 @@ shared_ptr<BusDevice> openRTLWMBUS(Detected detected,
             }
             else
             {
-                warning("Warning! rtl_wbus executable lacks -f option! Without this option rtl_wmbus cannot detect when rtl-sdr stops working.\n"
+                warning("Warning! rtl_wmbus executable lacks -f option! Without this option rtl_wmbus cannot detect when rtl-sdr stops working.\n"
                         "Please upgrade rtl_wmbus.\n");
             }
 
@@ -355,11 +357,7 @@ FrameStatus WMBusRTLWMBUS::checkRTLWMBUSFrame(vector<uchar> &data,
     // There might be a second telegram on the same line ;0x4944.......
     if (data.size() == 0) return PartialFrame;
 
-    if (isDebugEnabled())
-    {
-        string msg = safeString(data);
-        debug("(rtlwmbus) checkRTLWMBusFrame \"%s\"\n", msg.c_str());
-    }
+    debug("(rtlwmbus) checkRTLWMBusFrame \"%s\"\n", safeString(data).c_str());
 
     int payload_len = 0;
     size_t eolp = 0;

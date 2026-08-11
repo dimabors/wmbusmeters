@@ -24,6 +24,7 @@
 #include"wmbus.h"
 #include"wmbus_utils.h"
 
+#include<assert.h>
 #include<algorithm>
 #include<chrono>
 #include<cmath>
@@ -33,8 +34,9 @@
 #include<stdexcept>
 #include<time.h>
 
+using namespace std;
 
-struct MeterManagerImplementation : public virtual MeterManager
+struct MeterManagerImplementation : public MeterManager
 {
 private:
     bool is_daemon_ {};
@@ -151,12 +153,8 @@ public:
         // then lets check if there is a template that can create a meter for it.
         if (!handled && !exact_id_match)
         {
-            if (isDebugEnabled())
-            {
-                string idsc = Address::concat(addresses);
-                debug("(meter) no meter handled %s checking %d templates.\n",
-                      idsc.c_str(), meter_templates_.size());
-            }
+            debug("(meter) no meter handled %s checking %d templates.\n",
+                    Address::concat(addresses).c_str(), meter_templates_.size());
             // Not handled, maybe we have a template to create a new meter instance for this telegram?
             Telegram t;
             t.about = about;
@@ -214,16 +212,11 @@ public:
                         // Now build a meter object with for this exact id.
                         auto meter = createMeter(&meter_info);
                         addMeter(meter);
-                        if (isVerboseEnabled())
-                        {
-                            string idsc = Address::concat(t.addresses);
-                            string mi_idsc = AddressExpression::concat(mi.address_expressions);
-                            verbose("(meter) used meter template %s %s %s to match %s\n",
-                                    mi.name.c_str(),
-                                    mi_idsc.c_str(),
-                                    mi.driverName().str().c_str(),
-                                    idsc.c_str());
-                        }
+                        verbose("(meter) used meter template %s %s %s to match %s\n",
+                                mi.name.c_str(),
+                                AddressExpression::concat(mi.address_expressions).c_str(),
+                                mi.driverName().str().c_str(),
+                                Address::concat(t.addresses).c_str());
 
                         if (is_daemon_)
                         {
@@ -238,11 +231,10 @@ public:
                         }
                         else
                         {
-                            string mi_idsc = AddressExpression::concat(mi.address_expressions);
                             verbose("(meter) started meter %d (%s %s %s) identity mode: %s %s\n",
                                     meter->index(),
                                     mi.name.c_str(),
-                                    mi_idsc.c_str(),
+                                    AddressExpression::concat(mi.address_expressions).c_str(),
                                     mi.driverName().str().c_str(),
                                     toString(mi.identity_mode),
                                     identity_expression.str().c_str());
@@ -280,7 +272,7 @@ public:
         {
             f(about, input_frame);
         }
-        if (isVerboseEnabled() && !handled)
+        if (!handled)
         {
             verbose("(wmbus) telegram from %s ignored by all configured meters!\n", "TODO");
         }
@@ -334,7 +326,7 @@ public:
             DriverInfo di;
             if (!lookupDriverInfo(only, &di))
             {
-                error("No such driver %s\n", only.c_str());
+                error(EXIT_DRIVER_ERROR, "No such driver %s\n", only.c_str());
             }
             only = di.name().str();
         }
@@ -399,7 +391,6 @@ public:
 
     void analyzeTelegram(AboutTelegram &about, vector<uchar> &input_frame, bool simulated)
     {
-        loadAllBuiltinDrivers();
         Telegram t;
         t.about = about;
 
@@ -415,7 +406,7 @@ public:
 
         if (meter_templates_.size() > 0)
         {
-            error("You cannot specify a meter quadruple when analyzing.\n"
+            error(EXIT_USAGE_ERROR, "You cannot specify a meter quadruple when analyzing.\n"
                   "Instead use --analyze=<format>:<driver>:<key>\n"
                   "where <formt> <driver> <key> are all optional.\n"
                   "E.g.        --analyze=terminal:multical21:001122334455667788001122334455667788\n"

@@ -16,11 +16,15 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include<cstring>
 #include<set>
+
+#include"always.h"
+#include"log.h"
 #include"manufacturers.h"
 #include"manufacturer_specificities.h"
 #include"meters.h"
+
+using namespace std;
 
 std::set<int> diehl_manufacturers = {
     MANUFACTURER_DME,
@@ -166,12 +170,16 @@ void transformDiehlAddress(vector<uchar>& frame, DiehlAddressTransformMethod tra
 // Diehl: decode LFSR encrypted data used in Izar/PRIOS and Sharky meters
 vector<uchar> decodeDiehlLfsr(const vector<uchar> &origin, const vector<uchar> &frame, uint32_t key, DiehlLfsrCheckMethod check_method, uint32_t check_value)
 {
+    if (frame.size() < 15) return {};
+    if (origin.size() < 10) return {};
+
     // modify seed key with header values
     key ^= uint32FromBytes(origin, 2); // manufacturer + address[0-1]
     key ^= uint32FromBytes(origin, 6); // address[2-3] + version + type
     key ^= uint32FromBytes(frame, 10); // ci + some more bytes from the telegram...
 
     int size = frame.size() - 15;
+
     vector<uchar> decoded(size);
 
     for (int i = 0; i < size; ++i) {
@@ -366,7 +374,7 @@ void qdsExtractWalkByField(Telegram *t, Meter *driver, DVEntry &mfctEntry, int p
 
     FieldInfo *fieldInfo = driver->findFieldInfo(fieldName, quantity);
     if (fieldInfo == nullptr) {
-        error("(qds) field info not found: %s\n", fieldName.c_str());
+        error(EXIT_DEVICE_ERROR, "(qds) field info not found: %s\n", fieldName.c_str());
     }
 
     fieldInfo->performExtraction(driver, t, &fieldEntry);

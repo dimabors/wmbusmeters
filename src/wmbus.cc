@@ -15,16 +15,26 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include"aescmac.h"
-#include"sha256.h"
+#include"always.h"
+#include"log.h"
 #include"timings.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"dvparser.h"
 #include"manufacturer_specificities.h"
+#include"util.h"
+
+#include"crypto/crc16.h"
+#include"crypto/aescmac.h"
+#include"crypto/sha256.h"
+
+#include"utils/alarm.h"
+#include"utils/fs.h"
+
 #include<assert.h>
 #include<cmath>
+#include<time.h>
 #include<semaphore.h>
 #include<stdarg.h>
 #include<string.h>
@@ -35,173 +45,7 @@
 #include<deque>
 #include<algorithm>
 
-struct LinkModeInfo
-{
-    LinkMode mode;
-    const char *name;
-    const char *lcname;
-    const char *option;
-    uint64_t val;
-};
-
-LinkModeInfo link_modes_[] = {
-#define X(name,lcname,option,val) { LinkMode::name, #name , #lcname, #option, val },
-LIST_OF_LINK_MODES
-#undef X
-};
-
-const char *toString(LinkMode lm)
-{
-#define X(name,lcname,option,val) if (lm == LinkMode::name) return #lcname;
-LIST_OF_LINK_MODES
-#undef X
-
-    return "unknown";
-}
-
-LinkModeInfo *getLinkModeInfo(LinkMode lm);
-LinkModeInfo *getLinkModeInfoFromBit(int bit);
-
-LinkModeInfo *getLinkModeInfo(LinkMode lm)
-{
-    for (auto& s : link_modes_)
-    {
-        if (s.mode == lm)
-        {
-            return &s;
-        }
-    }
-    assert(0);
-    return NULL;
-}
-
-LinkModeInfo *getLinkModeInfoFromBit(uint64_t bit)
-{
-    for (auto& s : link_modes_)
-    {
-        if (s.val == bit)
-        {
-            return &s;
-        }
-    }
-    assert(0);
-    return NULL;
-}
-
-LinkMode isLinkModeOption(const char *arg)
-{
-    for (auto& s : link_modes_) {
-        if (!strcmp(arg, s.option)) {
-            return s.mode;
-        }
-    }
-    return LinkMode::UNKNOWN;
-}
-
-LinkMode toLinkMode(const char *arg)
-{
-    for (auto& s : link_modes_) {
-        if (!strcmp(arg, s.lcname)) {
-            return s.mode;
-        }
-    }
-    return LinkMode::UNKNOWN;
-}
-
-LinkModeSet parseLinkModes(string m)
-{
-    LinkModeSet lms;
-    char buf[m.length()+1];
-    strcpy(buf, m.c_str());
-    char *saveptr {};
-    const char *tok = strtok_r(buf, ",", &saveptr);
-    while (tok != NULL)
-    {
-        LinkMode lm = toLinkMode(tok);
-        if (lm == LinkMode::UNKNOWN)
-        {
-            error("(wmbus) not a valid link mode: %s\n", tok);
-        }
-        lms.addLinkMode(lm);
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    return lms;
-}
-
-bool isValidLinkModes(string m)
-{
-    LinkModeSet lms;
-    char buf[m.length()+1];
-    strcpy(buf, m.c_str());
-    char *saveptr {};
-    const char *tok = strtok_r(buf, ",", &saveptr);
-    while (tok != NULL)
-    {
-        LinkMode lm = toLinkMode(tok);
-        if (lm == LinkMode::UNKNOWN)
-        {
-            return false;
-        }
-        lms.addLinkMode(lm);
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    return true;
-}
-
-LinkModeSet &LinkModeSet::addLinkMode(LinkMode lm)
-{
-    for (auto& s : link_modes_) {
-        if (s.mode == lm) {
-            set_ |= s.val;
-        }
-    }
-    return *this;
-}
-
-void LinkModeSet::unionLinkModeSet(LinkModeSet lms)
-{
-    set_ |= lms.set_;
-}
-
-void LinkModeSet::disjunctionLinkModeSet(LinkModeSet lms)
-{
-    set_ &= lms.set_;
-}
-
-bool LinkModeSet::supports(LinkModeSet lms)
-{
-    // Will return false, if lms is UKNOWN (=0).
-    return (set_ & lms.set_) != 0;
-}
-
-bool LinkModeSet::has(LinkMode lm)
-{
-    LinkModeInfo *lmi = getLinkModeInfo(lm);
-    return (set_ & lmi->val) != 0;
-}
-
-bool LinkModeSet::hasAll(LinkModeSet lms)
-{
-    return (set_ & lms.set_) == lms.set_;
-}
-
-string LinkModeSet::hr()
-{
-    string r;
-    if (set_ == Any_bit) return "any";
-    if (set_ == 0) return "none";
-    for (auto& s : link_modes_)
-    {
-        if (s.mode == LinkMode::Any) continue;
-        if (set_ & s.val)
-        {
-            r += s.lcname;
-            r += ",";
-        }
-    }
-    r.pop_back();
-    return r;
-}
+using namespace std;
 
 struct Manufacturer {
     const char *code;
@@ -215,19 +59,12 @@ struct Manufacturer {
     }
 };
 
-vector<Manufacturer> manufacturers_;
+const vector<Manufacturer> manufacturers_ = {
+    #define X(key,code,name) Manufacturer(#key, code, name),
+    LIST_OF_MANUFACTURERS
+    #undef X
+};
 
-struct Initializer { Initializer(); };
-
-static Initializer initializser_;
-
-Initializer::Initializer() {
-
-#define X(key,code,name) manufacturers_.push_back(Manufacturer(#key,code,name));
-LIST_OF_MANUFACTURERS
-#undef X
-
-}
 
 void Telegram::addAddressMfctFirst(const vector<uchar>::iterator &pos)
 {
@@ -374,7 +211,7 @@ void Telegram::printTPL()
 
     verbose("(telegram) TPL CI=%02x", tpl_ci);
 
-    if (tpl_ci == 0x7a || tpl_ci == 0x72)
+    if (tpl_ci == 0x7a || tpl_ci == 0x72 || tpl_ci == 0x73)
     {
         string tpl_cfg_info = toStringFromTPLConfig(tpl_cfg);
         verbose(" ACC=%02x STS=%02x CFG=%04x (%s)",
@@ -624,16 +461,14 @@ string mediaTypeJSON(int a_field_device_type, int m_field)
     return "Unknown";
 }
 
-/*
-    X(0x73, TPL_73,  "TPL: long header compact APL follows", 0, CI_TYPE::TPL, "") \
-*/
-
 #define LIST_OF_CI_FIELDS \
     X(0x51, TPL_51,  "TPL: APL follows", 0, CI_TYPE::TPL, "")       \
     X(0x72, TPL_72,  "TPL: long header APL follows", 0, CI_TYPE::TPL, "") \
+    X(0x73, TPL_73,  "TPL: long header compact APL follows", 0, CI_TYPE::TPL, "") \
     X(0x78, TPL_78,  "TPL: no header APL follows", 0, CI_TYPE::TPL, "") \
     X(0x79, TPL_79,  "TPL: compact APL follows", 0, CI_TYPE::TPL, "") \
     X(0x7A, TPL_7A,  "TPL: short header APL follows", 0, CI_TYPE::TPL, "") \
+    X(0x7B, TPL_7B,  "TPL: short header compact APL follows", 0, CI_TYPE::TPL, "") \
     X(0x81, NWL_81,  "NWL: TPL or APL follows?", 0, CI_TYPE::NWL, "") \
     X(0x8C, ELL_I,   "ELL: I",    2, CI_TYPE::ELL, "CC, ACC") \
     X(0x8D, ELL_II,  "ELL: II",   8, CI_TYPE::ELL, "CC, ACC, SN, Payload CRC") \
@@ -839,6 +674,25 @@ void Telegram::addMoreExplanation(int pos, const char* fmt, ...)
 
     if (!found) {
         debug("(wmbus) warning: cannot find offset %d to add more explanation \"%s\"\n", pos, buf);
+    }
+}
+
+void Telegram::addIXMLExplanation(int pos, const char* ixml_parse)
+{
+    bool found = false;
+    for (auto& p : explanations) {
+        if (p.pos == pos)
+        {
+            // Append more information.
+            p.ixml_parse = ixml_parse;
+            // Since we are parsing using IXML, we assume that we have a full understanding.
+            p.understanding = Understanding::FULL;
+            found = true;
+        }
+    }
+
+    if (!found) {
+        debug("(wmbus) warning: cannot find offset %d to add ixml parse \"%s\"\n", pos, ixml_parse);
     }
 }
 
@@ -1536,8 +1390,6 @@ bool Telegram::checkMAC(std::vector<uchar> &frame,
     return ok;
 }
 
-bool loadFormatBytesFromSignature(uint16_t format_signature, vector<uchar> *format_bytes);
-
 bool Telegram::alreadyDecryptedCBC(vector<uchar>::iterator &pos)
 {
     CHECK(2);
@@ -1577,8 +1429,42 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
         int num_encrypted_bytes = 0;
         int num_not_encrypted_at_end = 0;
 
-        bool ok = decrypt_TPL_AES_CBC_IV(this, frame, pos, meter_keys->confidentiality_key,
-                                         &num_encrypted_bytes, &num_not_encrypted_at_end);
+        bool ok = false;
+
+        if (!meter_keys->hasConfidentialityKey() &&
+            !meter_keys->default_keys.empty())
+        {
+            // No explicit meter key — try each driver-supplied default key in order.
+            for (const auto &candidate : meter_keys->default_keys)
+            {
+                vector<uchar> saved(pos, frame.end());
+                vector<uchar> trial_key = candidate;
+                int nenc = 0, ntrail = 0;
+                bool dec_ok = decrypt_TPL_AES_CBC_IV(this, frame, pos, trial_key, &nenc, &ntrail);
+                if (dec_ok && pos+1 < frame.end() && *(pos) == 0x2f && *(pos+1) == 0x2f)
+                {
+                    meter_keys->confidentiality_key = candidate;
+                    num_encrypted_bytes = nenc;
+                    num_not_encrypted_at_end = ntrail;
+                    ok = true;
+                    break;
+                }
+                // Wrong key — restore encrypted region and try the next one.
+                frame.erase(pos, frame.end());
+                frame.insert(frame.end(), saved.begin(), saved.end());
+            }
+            // Always clear: if a key matched it has been promoted to confidentiality_key
+            // so the remaining candidates are no longer needed. If all failed they
+            // should not be retried on the next telegram.
+            meter_keys->default_keys.clear();
+        }
+
+        if (!ok)
+        {
+            ok = decrypt_TPL_AES_CBC_IV(this, frame, pos, meter_keys->confidentiality_key,
+                                        &num_encrypted_bytes, &num_not_encrypted_at_end);
+        }
+
         if (!ok)
         {
             // No key supplied.
@@ -1739,6 +1625,173 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
             return false;
         }
     }
+    else if (tpl_sec_mode == TPLSecurityMode::DES_NO_IV_DEPRECATED)
+    {
+        if (!meter_keys || !meter_keys->hasConfidentialityKey())
+        {
+            int num_encrypted_bytes = (int)distance(pos, frame.end());
+            string info = bin2hex(pos, frame.end(), num_encrypted_bytes);
+            info += " encrypted";
+            addExplanationAndIncrementPos(pos, num_encrypted_bytes, KindOfData::CONTENT, Understanding::ENCRYPTED, info.c_str());
+            if (parser_warns_)
+            {
+                if (!beingAnalyzed() && (isVerboseEnabled() || isDebugEnabled() || !warned_for_telegram_before(this, dll_a)))
+                {
+                    warning("(wmbus) WARNING! no key to decrypt DES payload! "
+                            "Permanently ignoring telegrams from id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                            dll_id_b[3], dll_id_b[2], dll_id_b[1], dll_id_b[0],
+                            manufacturerFlag(dll_mfct).c_str(),
+                            manufacturer(dll_mfct).c_str(),
+                            dll_mfct,
+                            mediaType(dll_type, dll_mfct).c_str(), dll_type,
+                            dll_version);
+                }
+            }
+            return false;
+        }
+        int num_encrypted_bytes = 0;
+        int num_not_encrypted_at_end = 0;
+        const uchar iv_zero[8] = {};
+        bool ok = decrypt_TPL_DES_CBC(this, frame, pos, meter_keys->confidentiality_key,
+                                      iv_zero, &num_encrypted_bytes, &num_not_encrypted_at_end);
+        if (!ok)
+        {
+            int num_bytes = (int)distance(pos, frame.end());
+            string info = bin2hex(pos, frame.end(), num_bytes);
+            info += " failed DES decryption";
+            addExplanationAndIncrementPos(pos, num_bytes, KindOfData::CONTENT, Understanding::ENCRYPTED, info.c_str());
+            return false;
+        }
+        // Decrypted plaintext starts with 2F 2F check bytes (same convention as AES mode 5).
+        // Reference: DES_CBC_DECRYPT in wMBus reference implementations.
+        CHECK(2);
+        uchar a = *(pos+0);
+        uchar b = *(pos+1);
+        addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                      "%02x%02x decrypt check bytes (%s)", a, b,
+                                      (a == 0x2f && b == 0x2f) ? "OK" : "ERROR should be 2f2f");
+        if ((a != 0x2f || b != 0x2f) && !FUZZING)
+        {
+            int num_bytes = (int)distance(pos, frame.end());
+            string info = bin2hex(pos, frame.end(), num_bytes);
+            info += " failed decryption. Wrong key?";
+            addExplanationAndIncrementPos(pos, num_bytes, KindOfData::CONTENT, Understanding::ENCRYPTED, info.c_str());
+            if (parser_warns_)
+            {
+                if (!beingAnalyzed() && (isVerboseEnabled() || isDebugEnabled() || !warned_for_telegram_before(this, dll_a)))
+                {
+                    warning("(wmbus) WARNING!! DES decrypted content failed check, did you use the correct decryption key? "
+                            "Permanently ignoring telegrams from id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                            dll_id_b[3], dll_id_b[2], dll_id_b[1], dll_id_b[0],
+                            manufacturerFlag(dll_mfct).c_str(),
+                            manufacturer(dll_mfct).c_str(),
+                            dll_mfct,
+                            mediaType(dll_type, dll_mfct).c_str(), dll_type,
+                            dll_version);
+                }
+            }
+            return false;
+        }
+    }
+    else if (tpl_sec_mode == TPLSecurityMode::DES_IV_DEPRECATED)
+    {
+        // EN 13757-7:2018 §9.4.3: mode 3 uses DES-CBC with a date-based IV.
+        // IV = ID[4 LE] + mfct[2] + date-type-G[2]
+        // The date is the meter's transmission date; try today and the last 2 days to handle drift.
+        if (!meter_keys || !meter_keys->hasConfidentialityKey())
+        {
+            int num_encrypted_bytes = (int)distance(pos, frame.end());
+            string info = bin2hex(pos, frame.end(), num_encrypted_bytes);
+            info += " encrypted";
+            addExplanationAndIncrementPos(pos, num_encrypted_bytes, KindOfData::CONTENT, Understanding::ENCRYPTED, info.c_str());
+            if (parser_warns_)
+            {
+                if (!beingAnalyzed() && (isVerboseEnabled() || isDebugEnabled() || !warned_for_telegram_before(this, dll_a)))
+                {
+                    warning("(wmbus) WARNING! no key to decrypt DES (mode 3) payload! "
+                            "Permanently ignoring telegrams from id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                            dll_id_b[3], dll_id_b[2], dll_id_b[1], dll_id_b[0],
+                            manufacturerFlag(dll_mfct).c_str(),
+                            manufacturer(dll_mfct).c_str(),
+                            dll_mfct,
+                            mediaType(dll_type, dll_mfct).c_str(), dll_type,
+                            dll_version);
+                }
+            }
+            return false;
+        }
+
+        // Try up to 3 days (today, yesterday, day before) to handle clock drift.
+        bool decrypted_ok = false;
+        for (int days_ago = 0; days_ago <= 2 && !decrypted_ok; days_ago++)
+        {
+            time_t t_time = time(NULL) - (time_t)(days_ago * 86400);
+            struct tm *tm_utc = gmtime(&t_time);
+            int year2 = tm_utc->tm_year - 100; // years since 2000
+            int month  = tm_utc->tm_mon + 1;
+            int day    = tm_utc->tm_mday;
+
+            // EN 13757-7 §9.4.3.1: IV = ID[4 LE] + mfct[2] + date-type-G[2]
+            // Type G: byte0 = month[2:0]<<5 | day[4:0], byte1 = year[6:0]<<1 | month[3]
+            uchar iv3[8];
+            iv3[0] = dll_id_b[0]; iv3[1] = dll_id_b[1];
+            iv3[2] = dll_id_b[2]; iv3[3] = dll_id_b[3];
+            iv3[4] = dll_mfct_b[0]; iv3[5] = dll_mfct_b[1];
+            iv3[6] = (uchar)(((month & 0x07) << 5) | (day & 0x1F));
+            iv3[7] = (uchar)(((year2 & 0x7F) << 1) | ((month >> 3) & 0x01));
+
+            // Save frame state so we can restore on wrong-date failure.
+            vector<uchar> saved_frame(pos, frame.end());
+
+            int num_encrypted_bytes = 0;
+            int num_not_encrypted_at_end = 0;
+            bool ok = decrypt_TPL_DES_CBC(this, frame, pos, meter_keys->confidentiality_key,
+                                          iv3, &num_encrypted_bytes, &num_not_encrypted_at_end);
+            if (!ok) continue;
+
+            if (*(pos+0) == 0x2f && *(pos+1) == 0x2f)
+            {
+                decrypted_ok = true;
+            }
+            else if (days_ago < 2)
+            {
+                // Wrong date — restore frame and try next day.
+                frame.erase(pos, frame.end());
+                frame.insert(frame.end(), saved_frame.begin(), saved_frame.end());
+            }
+        }
+
+        if (!decrypted_ok)
+        {
+            int num_bytes = (int)distance(pos, frame.end());
+            string info = bin2hex(pos, frame.end(), num_bytes);
+            info += " failed decryption. Wrong key?";
+            addExplanationAndIncrementPos(pos, num_bytes, KindOfData::CONTENT, Understanding::ENCRYPTED, info.c_str());
+            if (parser_warns_)
+            {
+                if (!beingAnalyzed() && (isVerboseEnabled() || isDebugEnabled() || !warned_for_telegram_before(this, dll_a)))
+                {
+                    warning("(wmbus) WARNING!! DES mode 3 decryption failed, wrong key or date? "
+                            "Permanently ignoring telegrams from id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                            dll_id_b[3], dll_id_b[2], dll_id_b[1], dll_id_b[0],
+                            manufacturerFlag(dll_mfct).c_str(),
+                            manufacturer(dll_mfct).c_str(),
+                            dll_mfct,
+                            mediaType(dll_type, dll_mfct).c_str(), dll_type,
+                            dll_version);
+                }
+            }
+            return false;
+        }
+
+        // 2F 2F check bytes — consume and verify.
+        CHECK(2);
+        uchar a = *(pos+0);
+        uchar b = *(pos+1);
+        addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                      "%02x%02x decrypt check bytes (%s)", a, b,
+                                      (a == 0x2f && b == 0x2f) ? "OK" : "ERROR should be 2f2f");
+    }
     else if (tpl_sec_mode == TPLSecurityMode::SPECIFIC_16_31)
     {
         debug("(wmbus) non-standard security mode 16_31\n");
@@ -1780,18 +1833,16 @@ bool Telegram::parse_TPL_72(vector<uchar>::iterator &pos)
     if (!ok) return false;
 
     bool decrypt_ok = potentiallyDecrypt(pos);
+    if (!decrypt_ok)
+    {
+        decryption_failed = true;
+        return true;
+    }
 
     header_size = distance(frame.begin(), pos);
     int remaining = distance(pos, frame.end())-suffix_size;
 
-    if (decrypt_ok)
-    {
-        parseDV(this, frame, pos, remaining, &dv_entries);
-    }
-    else
-    {
-        decryption_failed = true;
-    }
+    parseDV(this, frame, pos, remaining, &dv_entries);
 
     return true;
 }
@@ -1807,7 +1858,10 @@ bool Telegram::parse_TPL_78(vector<uchar>::iterator &pos)
 
 bool Telegram::parse_TPL_79(vector<uchar>::iterator &pos)
 {
-    // Compact frame
+    MVT mvt = {(uint16_t)dll_mfct, dll_version, dll_type};
+    
+    bool ok = false;
+
     CHECK(2);
     uchar ecrc0 = *(pos+0);
     uchar ecrc1 = *(pos+1);
@@ -1817,35 +1871,86 @@ bool Telegram::parse_TPL_79(vector<uchar>::iterator &pos)
     format_signature = ecrc1<<8 | ecrc0;
 
     vector<uchar> format_bytes;
-    bool ok = loadFormatBytesFromSignature(format_signature, &format_bytes);
-    if (!ok) {
-        // We have not yet seen a long frame, but we know the formats for some
-        // meter specific hashes.
-        ok = findFormatBytesFromKnownMeterSignatures(&format_bytes);
-        if (!ok)
-        {
-            addMoreExplanation(offset, " (unknown)");
-            int num_compressed_bytes = distance(pos, frame.end());
-            string info = bin2hex(pos, frame.end(), num_compressed_bytes);
-            info += " compressed and signature unknown";
-            addExplanationAndIncrementPos(pos, distance(pos, frame.end()), KindOfData::CONTENT, Understanding::COMPRESSED, info.c_str());
-
-            verbose("(wmbus) ignoring compressed telegram since format signature hash 0x%02x is yet unknown.\n"
-                    "     this is not a problem, since you only need wait for at most 8 telegrams\n"
-                    "     (8*16 seconds) until an full length telegram arrives and then we know\n"
-                    "     the format giving this hash and start decoding the telegrams properly.\n",
-                    format_signature);
-            return false;
-        }
+    ok = lookupCompactFormat(mvt, format_signature, format_bytes);
+    if (!ok)
+    {
+        addMoreExplanation(offset, " (unknown)");
+        int num_compressed_bytes = distance(pos, frame.end());
+        string info = bin2hex(pos, frame.end(), num_compressed_bytes);
+        info += " compressed and signature unknown";
+        addExplanationAndIncrementPos(pos, distance(pos, frame.end()),
+                                      KindOfData::CONTENT, Understanding::COMPRESSED,
+                                      info.c_str());
+        verbose("(wmbus) ignoring compressed telegram since format signature hash 0x%02x is yet unknown.\n"
+                "     this is not a problem, since you only need wait for at most 8 telegrams\n"
+                "     (8*16 seconds) until an full length telegram arrives and then we know\n"
+                "     the format giving this hash and start decoding the telegrams properly.\n",
+                format_signature);
+        return false;
     }
     vector<uchar>::iterator format = format_bytes.begin();
 
-    // 2,3 = crc for payload = hash over both DRH and data bytes. Or is it only over the data bytes?
     CHECK(2);
     int ecrc2 = *(pos+0);
     int ecrc3 = *(pos+1);
     addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
                                   "%02x%02x data crc", ecrc2, ecrc3);
+
+    header_size = distance(frame.begin(), pos);
+    int remaining = distance(pos, frame.end())-suffix_size;
+
+    parseDV(this, frame, pos, remaining, &dv_entries, &format, format_bytes.size());
+
+    return true;
+}
+
+bool Telegram::parse_TPL_73(vector<uchar>::iterator &pos)
+{
+    MVT mvt = {(uint16_t)tpl_mfct, tpl_version, tpl_type};
+
+    bool ok = parseLongTPL(pos);
+    if (!ok) return false;
+
+    bool decrypt_ok = potentiallyDecrypt(pos);
+    if (!decrypt_ok)
+    {
+        decryption_failed = true;
+        return true;
+    }
+
+    CHECK(2);
+    uchar ecrc0 = *(pos+0);
+    uchar ecrc1 = *(pos+1);
+    size_t offset = distance(frame.begin(), pos);
+    addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                  "%02x%02x format signature", ecrc0, ecrc1);
+    format_signature = ecrc1<<8 | ecrc0;
+
+    vector<uchar> format_bytes;
+    ok = lookupCompactFormat(mvt, format_signature, format_bytes);
+    if (!ok)
+    {
+        addMoreExplanation(offset, " (unknown)");
+        int num_compressed_bytes = distance(pos, frame.end());
+        string info = bin2hex(pos, frame.end(), num_compressed_bytes);
+        info += " compressed and signature unknown";
+        addExplanationAndIncrementPos(pos, distance(pos, frame.end()),
+                                      KindOfData::CONTENT, Understanding::COMPRESSED,
+                                      info.c_str());
+        verbose("(wmbus) ignoring compressed telegram since format signature hash 0x%02x is yet unknown.\n"
+                "     this is not a problem, since you only need wait for at most 8 telegrams\n"
+                "     (8*16 seconds) until an full length telegram arrives and then we know\n"
+                "     the format giving this hash and start decoding the telegrams properly.\n",
+                format_signature);
+        return false;
+    }
+    vector<uchar>::iterator format = format_bytes.begin();
+
+    CHECK(2);
+    int ecrc2 = *(pos+0);
+    int ecrc3 = *(pos+1);
+    addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                  "%02x%02x full frame crc", ecrc2, ecrc3);
 
     header_size = distance(frame.begin(), pos);
     int remaining = distance(pos, frame.end())-suffix_size;
@@ -1861,18 +1966,73 @@ bool Telegram::parse_TPL_7A(vector<uchar>::iterator &pos)
     if (!ok) return false;
 
     bool decrypt_ok = potentiallyDecrypt(pos);
+    if (!decrypt_ok)
+    {
+        decryption_failed = true;
+        return true;
+    }
 
     header_size = distance(frame.begin(), pos);
     int remaining = distance(pos, frame.end())-suffix_size;
 
-    if (decrypt_ok)
-    {
-        parseDV(this, frame, pos, remaining, &dv_entries);
-    }
-    else
+    parseDV(this, frame, pos, remaining, &dv_entries);
+
+    return true;
+}
+
+bool Telegram::parse_TPL_7B(vector<uchar>::iterator &pos)
+{
+    MVT mvt = {(uint16_t)tpl_mfct, tpl_version, tpl_type};
+
+    bool ok = parseShortTPL(pos);
+    if (!ok) return false;
+
+    bool decrypt_ok = potentiallyDecrypt(pos);
+    if (!decrypt_ok)
     {
         decryption_failed = true;
+        return true;
     }
+
+    CHECK(2);
+    uchar ecrc0 = *(pos+0);
+    uchar ecrc1 = *(pos+1);
+    size_t offset = distance(frame.begin(), pos);
+    addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                  "%02x%02x format signature", ecrc0, ecrc1);
+    format_signature = ecrc1<<8 | ecrc0;
+
+    vector<uchar> format_bytes;
+    ok = lookupCompactFormat(mvt, format_signature, format_bytes);
+    if (!ok)
+    {
+        addMoreExplanation(offset, " (unknown)");
+        int num_compressed_bytes = distance(pos, frame.end());
+        string info = bin2hex(pos, frame.end(), num_compressed_bytes);
+        info += " compressed and signature unknown";
+        addExplanationAndIncrementPos(pos, distance(pos, frame.end()),
+                                      KindOfData::CONTENT, Understanding::COMPRESSED,
+                                      info.c_str());
+        verbose("(wmbus) ignoring compressed telegram since format signature hash 0x%02x is yet unknown.\n"
+                "     this is not a problem, since you only need wait for at most 8 telegrams\n"
+                "     (8*16 seconds) until an full length telegram arrives and then we know\n"
+                "     the format giving this hash and start decoding the telegrams properly.\n",
+                format_signature);
+        return false;
+    }
+    vector<uchar>::iterator format = format_bytes.begin();
+
+    CHECK(2);
+    int ecrc2 = *(pos+0);
+    int ecrc3 = *(pos+1);
+    addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                  "%02x%02x full frame crc", ecrc2, ecrc3);
+
+    header_size = distance(frame.begin(), pos);
+    int remaining = distance(pos, frame.end())-suffix_size;
+
+    parseDV(this, frame, pos, remaining, &dv_entries, &format, format_bytes.size());
+
     return true;
 }
 
@@ -1910,9 +2070,11 @@ bool Telegram::parseTPL(vector<uchar>::iterator &pos)
     switch (tpl_ci)
     {
         case CI_Field_Values::TPL_72: return parse_TPL_72(pos);
+        case CI_Field_Values::TPL_73: return parse_TPL_73(pos);
         case CI_Field_Values::TPL_78: return parse_TPL_78(pos);
         case CI_Field_Values::TPL_79: return parse_TPL_79(pos);
         case CI_Field_Values::TPL_7A: return parse_TPL_7A(pos);
+        case CI_Field_Values::TPL_7B: return parse_TPL_7B(pos);
         default:
         {
             // A0 to B7 are manufacturer specific.
@@ -2153,6 +2315,9 @@ bool Telegram::parseHAN(vector<uchar> &input_frame, MeterKeys *mk, bool warn)
 
 void Telegram::explainParse(string intro, int from)
 {
+    sort(explanations.begin(), explanations.end(),
+         [](const Explanation & a, const Explanation & b) -> bool { return a.pos < b.pos; });
+
     for (auto& p : explanations)
     {
         // Protocol or content?
@@ -2168,6 +2333,10 @@ void Telegram::explainParse(string intro, int from)
         if (p.kind == KindOfData::PROTOCOL && p.understanding == Understanding::FULL) u = " ";
 
         debug("%s %03d %s%s: %s\n", intro.c_str(), p.pos, c, u, p.info.c_str());
+        if (p.ixml_parse != "")
+        {
+            debugPrefixed(intro.c_str(), p.ixml_parse.c_str());
+        }
     }
 }
 
@@ -2238,6 +2407,10 @@ string renderAnalysisAsText(vector<Explanation> &explanations, OutputFormat of)
         }
 
         s += tostrprintf("%03d %s%s: %s%s%s\n", p.pos, c, u, pre, p.info.c_str(), post);
+        if (p.ixml_parse != "")
+        {
+            s += p.ixml_parse;
+        }
     }
     return s;
 }
@@ -2255,20 +2428,51 @@ string Telegram::analyzeParse(OutputFormat format, int *content_length, int *und
     sort(explanations.begin(), explanations.end(),
          [](const Explanation & a, const Explanation & b) -> bool { return a.pos < b.pos; });
 
-    // Calculate how much is understood.
+    // Calculate how much is understood, deduplicating overlapping byte ranges.
+    // When processContent is used (e.g. manufacturer-specific 0F DIF data),
+    // the initial DIF/VIF parse marks all mfct bytes as CONTENT/NONE,
+    // then processContent adds CONTENT/FULL explanations for the same bytes.
+    // Without deduplication these bytes would be double-counted.
+    int max_pos = 0;
     for (auto& e : explanations)
     {
-        if (e.kind == KindOfData::CONTENT)
+        int end = e.pos + e.len;
+        if (end > max_pos) max_pos = end;
+    }
+
+    // Per-byte tracking: 0=not content, 1=content/not-understood, 2=content/understood
+    vector<int> byte_status(max_pos, 0);
+    vector<bool> is_protocol(max_pos, false);
+
+    for (auto& e : explanations)
+    {
+        if (e.kind == KindOfData::PROTOCOL)
         {
-            l += e.len;
-            if (e.understanding == Understanding::PARTIAL ||
-                e.understanding == Understanding::FULL)
+            // Protocol bytes override any previous content marking
+            for (int p = e.pos; p < e.pos + e.len && p < max_pos; p++)
             {
-                // Its content and we have at least some understanding.
-                u += e.len;
+                byte_status[p] = 0;
+                is_protocol[p] = true;
+            }
+        }
+        else if (e.kind == KindOfData::CONTENT)
+        {
+            int level = (e.understanding >= Understanding::PARTIAL) ? 2 : 1;
+            for (int p = e.pos; p < e.pos + e.len && p < max_pos; p++)
+            {
+                // Do not let content override a protocol-marked position
+                if (!is_protocol[p] && level > byte_status[p])
+                    byte_status[p] = level;
             }
         }
     }
+
+    for (int p = 0; p < max_pos; p++)
+    {
+        if (byte_status[p] >= 1) l++;
+        if (byte_status[p] >= 2) u++;
+    }
+
     *content_length = l;
     *understood_content_length = u;
 
@@ -2821,6 +3025,18 @@ double vifScale(int vif)
     case 0x76: return 1.0; // Actuality duration hours
     case 0x77: return (1.0/24.0); // Actuality duration days
 
+    case 0x7c: return 1.0; // Variable length VIF descriptions defaults to scale 1.0.
+        /* Such fields are used in qsmoke for counters
+        028   : 81 dif (8 Bit Integer/Binary Instantaneous value)
+        029   : 03 dife (subunit=0 tariff=0 storagenr=6)
+        030   : 7C vif (VIF in following string (length in first byte))
+        031   : 03 viflen (3)
+        032   : 4C vif (L)
+        033   : 41 vif (A)
+        034   : 23 vif (#)
+        035 C!: 00 ("alarm_counter":0)
+        */
+
         // Active energy 0.1 or 1 MWh normalize to 100 KWh or 1000 KWh
         // 7b00 33632 -> 3363.2 MWh -> 3363200 KWh
         // 7b01 33632 -> 33632 MWh -> 33632000 KWh
@@ -2836,6 +3052,8 @@ double vifScale(int vif)
         // relative humidity is a dimensionless value.
     case 0x7b1a: return 10.0; // Relative humidity 0.1 %
     case 0x7b1b: return 1.0;  // Relative humidity 1 %
+
+    case 0x7d08: return 1.0; // Access Number
 
         // wmbusmeters always returns time in hours
         // 0x7d30 is not supposed to be used according to spec.
@@ -2879,6 +3097,8 @@ double vifScale(int vif)
     case 0x7d5e:
     case 0x7d5f: { double exp = (vif & 0xf)-12; return pow(10.0, -exp); }
 
+    case 0x7d61: return 1.0; // CumulationCounter
+
         // for remaining battery wmbusmeters returns number of days.
     case 0x7d74: { return 1.0; }
 
@@ -2887,6 +3107,8 @@ double vifScale(int vif)
     case 0x7d2d: return 60.0; // Duration since readout minutes
     case 0x7d2e: return 1.0; // Duration since readout hours
     case 0x7d2f: return (1.0/24.0); // Duration since readout days
+
+    case 0x7d3a: return 1.0; // Dimensionless
 
         /*
     case 0x78: // Fabrication no
@@ -3690,13 +3912,15 @@ string vif_7D_SecondExtensionType(uchar dif, uchar vif, uchar vife)
 string vif_6F_ThirdExtensionType(uchar dif, uchar vif, uchar vife)
 {
     assert(vif == 0xef);
-    return "?";
+    // EN 13757-3:2018, 6.4.3 Table 11: EFh is reserved for a future third extension table.
+    return "Reserved for future third extension table";
 }
 
 string vif_7F_ManufacturerExtensionType(uchar dif, uchar vif, uchar vife)
 {
     assert(vif == 0xff);
-    return "?";
+    // EN 13757-3:2018, 6.4.3 Table 11: 7Fh/FFh block (including VIFEs) is manufacturer specific.
+    return "Manufacturer specific";
 }
 
 string vifeType(int dif, int vif, int vife)
@@ -3991,17 +4215,6 @@ uint64_t dataAsUint64(int dif, int vif, int vife, string data)
     return -1;
 }
 
-string linkModeName(LinkMode link_mode)
-{
-
-    for (auto& s : link_modes_) {
-        if (link_mode == s.mode) {
-            return s.name;
-        }
-    }
-    return "UnknownLinkMode";
-}
-
 string measurementTypeName(MeasurementType mt)
 {
     switch (mt) {
@@ -4016,51 +4229,6 @@ string measurementTypeName(MeasurementType mt)
 }
 
 BusDevice::~BusDevice() {
-}
-
-bool Telegram::findFormatBytesFromKnownMeterSignatures(vector<uchar> *format_bytes)
-{
-    bool ok = true;
-    if (format_signature == 0xa8ed)
-    {
-        hex2bin("02FF2004134413615B6167", format_bytes);
-        debug("(wmbus) using hard coded format for hash a8ed\n");
-    }
-    else if (format_signature == 0xc412)
-    {
-        hex2bin("02FF20041392013BA1015B8101E7FF0F", format_bytes);
-        debug("(wmbus) using hard coded format for hash c412\n");
-    }
-    else if (format_signature == 0x61eb)
-    {
-        hex2bin("02FF2004134413A1015B8101E7FF0F", format_bytes);
-        debug("(wmbus) using hard coded format for hash 61eb\n");
-    }
-    else if (format_signature == 0xd2f7)
-    {
-        hex2bin("02FF2004134413615B5167", format_bytes);
-        debug("(wmbus) using hard coded format for hash d2f7\n");
-    }
-    else if (format_signature == 0xdd34)
-    {
-        hex2bin("02FF2004134413", format_bytes);
-        debug("(wmbus) using hard coded format for hash dd34\n");
-    }
-    else if (format_signature == 0x7c0e)
-    {
-        hex2bin("02FF200413523B", format_bytes);
-        debug("(wmbus) using hard coded format for hash 7c0e\n");
-    }
-    else if (format_signature == 0x0905)
-    {
-        hex2bin("04FF234413523B06FF1B426C61675167023B04138101E7FF0F", format_bytes);
-        debug("(wmbus) using hard coded format for hash 0905\n");
-    }
-    else
-    {
-        ok = false;
-    }
-    return ok;
 }
 
 BusDeviceCommonImplementation::~BusDeviceCommonImplementation()
@@ -4470,7 +4638,7 @@ bool BusDeviceCommonImplementation::waitForResponse(int id)
 
     if (waiting_for_response_id_ != 0)
     {
-        error("(wmbus) bad internal state tried waitForResponse(%d) but already waiting for %d! Exiting!\n", id, waiting_for_response_id_);
+        error(EXIT_BUS_DEVICE_ERROR, "(wmbus) bad internal state tried waitForResponse(%d) but already waiting for %d! Exiting!\n", id, waiting_for_response_id_);
     }
 
     waiting_for_response_id_ = id;
@@ -5063,6 +5231,16 @@ string decodeTPLStatusByteNoMfct(uchar sts)
 
 string decodeTPLStatusByteWithMfct(uchar sts, Translate::Lookup &lookup)
 {
+    if (lookup.hasLookups() && lookup.touches1F())
+    {
+        // Manufacturer overrides ALL TPL status bits (e.g. BMeters RFM-AMB).
+        // If the lookup touches the standardized bits 0x1f then use it for the whole byte.
+        // Normally it covers just the vendor-specific bits 0xe0.
+        string t = lookup.translate(sts);
+        if (t.empty()) t = "OK";
+        return t;
+    }
+
     string s = decodeTPLStatusByteOnlyStandardBits(sts);
     string t = "OK";
 
@@ -5685,7 +5863,7 @@ Detected detectBusDeviceWithFileOrHex(SpecifiedDevice &specified_device,
     LinkModeSet desired_linkmodes = lms;
     if (specified_device.type == BusDeviceType::DEVICE_UNKNOWN)
     {
-        error("You have to specify the expected device type for the tty %s\n",
+        error(EXIT_BUS_DEVICE_ERROR, "You have to specify the expected device type for the tty %s\n",
               specified_device.file.c_str());
     }
 

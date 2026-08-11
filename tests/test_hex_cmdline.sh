@@ -13,7 +13,7 @@ Received telegram from: 76348799
           manufacturer: (KAM) Kamstrup Energi (0x2c2d)
                   type: Cold water meter (0x16) encrypted
                    ver: 0x1b
-                driver: multical21
+                driver: kamwater
 EOF
 
 $PROG 2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24 > $TEST/test_output.txt 2>&1
@@ -39,7 +39,7 @@ else
 fi
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"multical21","name":"MyWater","id":"76348799","status":"DRY","total_m3":6.408,"target_m3":6.408,"flow_temperature_c":127,"external_temperature_c":19,"current_status":"DRY","time_dry":"22-31 days","time_reversed":"","time_leaking":"","time_bursting":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"MyWater","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -78,7 +78,7 @@ EOF
 
 $PROG 2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC2 2> $TEST/test_output.txt 1>&2
 
-if [ "$?" = "1" ]
+if [ "$?" != "0" ]
 then
     diff $TEST/test_expected.txt $TEST/test_output.txt
     if [ "$?" = "0" ]
@@ -102,7 +102,7 @@ TESTNAME="Test hex on stdin"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
 {"_":"telegram","media":"other","meter":"lansenpu","name":"MyCounter","id":"00010206","status":"OK","a_counter":4711,"b_counter":1234,"timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"cold water","meter":"multical21","name":"MyWater","id":"76348799","status":"DRY","total_m3":6.408,"target_m3":6.408,"flow_temperature_c":127,"external_temperature_c":19,"current_status":"DRY","time_dry":"22-31 days","time_reversed":"","time_leaking":"","time_bursting":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"MyWater","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 {"_":"telegram","media":"other","meter":"lansenpu","name":"MyCounter","id":"00010206","status":"OK","a_counter":4711,"b_counter":1234,"timestamp":"1111-11-11T11:11:11Z"}
 EOF
 

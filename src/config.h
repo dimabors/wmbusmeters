@@ -18,14 +18,13 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include"always.h"
+#include"log.h"
 #include"units.h"
-#include"util.h"
 #include"wmbus.h"
 #include"meters.h"
 #include<set>
 #include<vector>
-
-using namespace std;
 
 enum class MeterFileType
 {
@@ -56,13 +55,13 @@ struct ConfigOverrides
     std::string exitafter_override;
     std::string oneshot_override;
     std::string logfile_override;
-    std::string listmeters_override;
+    std::string listdrivers_override;
     std::string listfields_override;
 };
 
 struct Configuration
 {
-    string bin_dir {}; // The wmbusmeters binary executed is located here.
+    std::string bin_dir {}; // The wmbusmeters binary executed is located here.
                        // Use this directory to look for other tools such as rtl_wmbus/rtl_sdr
                        // inside the same directory.
     bool daemon {};
@@ -78,8 +77,8 @@ struct Configuration
     bool license {};
     bool analyze {};
     OutputFormat analyze_format {};
-    string analyze_driver {};
-    string analyze_key {};
+    std::string analyze_driver {};
+    std::string analyze_key {};
     bool analyze_verbose {};
     int analyze_profile {}; // If greater than 0, then run the handleTelegram call this number of times when analyzing.
     bool debug {};
@@ -113,10 +112,10 @@ struct Configuration
     bool exit_instead_of_alarm_ {};
     bool list_shell_envs {};
     bool list_fields {};
-    bool list_meters {}; // Should be renamed to drivers.
+    bool list_drivers {};
     bool print_driver {};
     bool list_units {};
-    std::string list_meters_search;
+    std::string list_drivers_search;
     // When asking for envs or fields, this is the meter type to list for.
     std::string list_meter;
     bool oneshot {};
@@ -137,7 +136,7 @@ struct Configuration
     LinkModeSet all_device_linkmodes_specified; // A union of all device specified linkmodes.
                                                 // Eventually not all devices might be found, so a realtime check is done later.
     LinkModeSet all_meters_linkmodes_specified; // A union of all meters linkmodes.
-    string telegram_reader;
+    std::string telegram_reader;
     bool no_net {}; // If true, then only use cached downloadable driver such as @iperl etc.
     std::string basic_auth_cred; // Store a "user:pwd" string to be supplied as basic auth to download.
     std::vector<std::string> selected_fields;
@@ -150,12 +149,11 @@ struct Configuration
     ~Configuration() = default;
 };
 
-shared_ptr<Configuration> loadConfiguration(string root, ConfigOverrides overrides);
+std::shared_ptr<Configuration> loadConfiguration(std::string root, ConfigOverrides overrides);
 
-void parseMeterConfig(Configuration *c, vector<char> &buf, string file);
-void handleSelectedFields(Configuration *c, string s);
-void handleAddedFields(Configuration *c, string s);
-bool handleDeviceOrHex(Configuration *c, string devicefilehex);
+void parseMeterConfig(Configuration *c, std::vector<char> &buf, std::string file);
+void handleSelectedFields(Configuration *c, std::string s);
+bool handleDeviceOrHex(Configuration *c, std::string devicefilehex);
 
 enum class LinkModeCalculationResultType
 {

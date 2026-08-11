@@ -15,6 +15,8 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "always.h"
+#include "log.h"
 #include "threads.h"
 
 #include <unistd.h>
@@ -130,9 +132,9 @@ Lock::Lock(RecursiveMutex *rmutex, const char *func_name)
 Lock::~Lock()
 {
     trace("[UNLOCKING] %s %s (%s %d)\n", rmutex_->name_, func_name_, rmutex_->locked_in_func_, rmutex_->locked_by_pid_);
-    pthread_mutex_unlock(&rmutex_->mutex_);
     rmutex_->locked_in_func_ = "";
     rmutex_->locked_by_pid_ = 0;
+    pthread_mutex_unlock(&rmutex_->mutex_);
     trace("[UNLOCKED]  %s %s (%s %d)\n", rmutex_->name_, func_name_, rmutex_->locked_in_func_, rmutex_->locked_by_pid_);
 }
 
@@ -166,7 +168,7 @@ bool Semaphore::wait()
         if (!rc) break;
         if (rc == EINTR) continue;
         if (rc == ETIMEDOUT) break;
-        error("(thread) pthread cond timedwait ERROR %d\n", rc);
+        error(EXIT_THREAD_ERROR, "(thread) pthread cond timedwait ERROR %d\n", rc);
     }
 
     pthread_mutex_unlock(&mutex_);
@@ -184,7 +186,7 @@ void Semaphore::notify()
     int rc = pthread_cond_signal(&condition_);
     if (rc)
     {
-        error("(thread) pthread cond signal ERROR\n");
+        error(EXIT_THREAD_ERROR, "(thread) pthread cond signal ERROR\n");
     }
 }
 

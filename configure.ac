@@ -1,4 +1,4 @@
-# Copyright (C) 2020 Fredrik Öhrström
+# Copyright (C) 2020-2026 Fredrik Öhrström
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@ AC_CANONICAL_HOST
 m4_include([autoconf/pkg.m4])
 
 PKG_PREREQ(0.29)
+PKG_PROG_PKG_CONFIG
 
 SRC_ROOT="$(pwd -L)"
 
@@ -35,58 +36,37 @@ mkdir -p "$OUTPUT_ROOT"
 
 AC_LANG_PUSH([C++])
 
-case $host_os in
-freebsd*)
-	CFLAGS="$CFLAGS -I/usr/local/include"
-	CXXFLAGS="$CXXFLAGS -I/usr/local/include"
-	LDFLAGS="$LDFLAGS -L/usr/local/lib"
-        ;;
-darwin*)
-	CFLAGS="$CFLAGS -I/usr/local/include -I/opt/homebrew/include"
-	CXXFLAGS="$CXXFLAGS -I/usr/local/include -I/opt/homebrew/include"
-	LDFLAGS="$LDFLAGS -L/usr/local/lib -L/opt/homebrew/lib"
-;;
-esac
+AC_PROG_CXX
 
-#C_CHECK_LIB(usb, usb_init, [],
-#
-#  C_MSG_ERROR([Could  not find libusb library. Try: sudo apt install libusb-dev])
-#)
-
-AC_CHECK_LIB(rtlsdr, rtlsdr_get_device_count, [],
-[
-  AC_MSG_ERROR([Could  not find rtlsdr library. Try: sudo apt install librtlsdr-dev])
-])
-
-AC_CHECK_LIB(xml2, xmlFreeDoc, [],
-[
-  AC_MSG_ERROR([Could  not find libxml2 library. Try: sudo apt install libxml2-dev])
-])
-
-AC_MSG_CHECKING([libxml include dir])
-
-if test -d /usr/include/libxml2/libxml/xpath.h
-then
-   CFLAGS="$CFLAGS -I/usr/include/libxml2"
-   CXXFLAGS="$CXXFLAGS -I/usr/include/libxml2"
-   AC_MSG_RESULT([/usr/include/libxml2])
+AC_MSG_CHECKING([whether CXX is Clang])
+if $CXX --version 2>/dev/null | grep -qi clang; then
+    is_clangxx=yes
 else
-   LIBXML2INC="$(pkg-config --cflags libxml-2.0)"
-   if test -n "$LIBXML2INC"
-   then
-      CFLAGS="$CFLAGS $LIBXML2INC"
-      CXXFLAGS="$CXXFLAGS $LIBXML2INC"
-      AC_MSG_RESULT([$LIBXML2INC])
-   else
-       LIBXML2INC=$(find / -name xpath.h)
-       AC_MSG_RESULT([not found, but perhaps this? $LIBXML2INC])
-   fi
+    is_clangxx=no
 fi
+AC_MSG_RESULT([$is_clangxx])
+
+if test "x$GXX" = "xyes" && test "x$is_clangxx" = "xno"; then
+    CXXFLAGS="$CXXFLAGS -fdump-tree-optimized"
+fi
+
+PKG_CHECK_MODULES([LIBXML], [libxml-2.0 >= 2.0])
+AC_SUBST(LIBXML_CFLAGS)
+AC_SUBST(LIBXML_LIBS)
+
+PKG_CHECK_MODULES([LIBRTLSDR], [librtlsdr >= 0.6])
+AC_SUBST(LIBRTLSDR_CFLAGS)
+AC_SUBST(LIBRTLSDR_LIBS)
+
+PKG_CHECK_MODULES([LIBUSB], [libusb-1.0 >= 1.0])
+AC_SUBST(LIBUSB_CFLAGS)
+AC_SUBST(LIBUSB_LIBS)
+
+AC_SUBST(CONF_NAME)
 
 AC_SUBST(CFLAGS)
 AC_SUBST(CXXFLAGS)
 AC_CONFIG_FILES([$OUTPUT_ROOT/spec.gmk:$SRC_ROOT/autoconf/spec.gmk.in])
-AC_CONFIG_FILES([$OUTPUT_ROOT/Makefile:$SRC_ROOT/autoconf/Makefile.in])
 
 # Make sure config.status ends up in the build directory instead of the src root.
 CONFIG_STATUS="$OUTPUT_ROOT/config.status"

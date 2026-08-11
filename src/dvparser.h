@@ -18,16 +18,17 @@
 #ifndef DVPARSER_H
 #define DVPARSER_H
 
-#include"util.h"
+#include"always.h"
+#include"drivers.h"
 #include"units.h"
 #include"xmq.h"
 
+#include<cstdint>
 #include<map>
 #include<set>
-#include<cstdint>
-#include<time.h>
-#include<functional>
+#include<string>
 #include<vector>
+#include<unordered_map>
 
 #define LIST_OF_VIF_RANGES \
     X(Volume,0x10,0x17,Quantity::Volume,Unit::M3) \
@@ -78,6 +79,15 @@
     X(AnyEnergyVIF,0x00,0x00, Quantity::Energy, Unit::Unknown)  \
     X(AnyPowerVIF,0x00,0x00, Quantity::Power, Unit::Unknown)
 
+struct Vif
+{
+    Vif(int n) : nr_(n) {}
+    int intValue() { return nr_; }
+    bool operator==(Vif s) { return nr_ == s.nr_; }
+
+private:
+    int nr_;
+};
 
 enum class VIFRange
 {
@@ -97,7 +107,7 @@ const char *toString(VIFRange v);
 VIFRange toVIFRange(const char *s);
 Unit toDefaultUnit(VIFRange v);
 VIFRange toVIFRange(int i);
-bool isInsideVIFRange(int i, VIFRange range);
+bool isInsideVIFRange(Vif vif, VIFRange range);
 
 #define LIST_OF_VIF_COMBINABLES \
     X(Reserved,0x00,0x11) \
@@ -197,6 +207,12 @@ bool isInsideVIFRange(int i, VIFRange range);
     X(Mfct07,0x7f07,0x7f07) \
     X(Mfct08,0x7f08,0x7f08) \
     X(Mfct21,0x7f21,0x7f21) \
+    X(Mfct72,0x7f72,0x7f72) \
+    X(Synthetic,0x7f77,0x7f77) \
+
+// Synthetic is a wmbusmeters specific combinable used
+// to mark generated difvifkeys from fields extracted from
+// Compact profile entries.
 
 enum class VIFCombinable
 {
@@ -310,19 +326,13 @@ private:
     SubUnitNr subunit_nr_ { 0 };
 };
 
-void extractDV(DifVifKey &s, uchar *dif, int *vif, bool *has_difes, bool *has_vifes);
+void extractDV(DifVifKey &dvk, uchar *dif, int *vif, bool *has_difes, bool *has_vifes,
+               MeasurementType *measurement_type,
+               StorageNr *storage_nr,
+               TariffNr *tariff_nr,
+               SubUnitNr *subunit_nr);
 
 static DifVifKey NoDifVifKey = DifVifKey("");
-
-struct Vif
-{
-    Vif(int n) : nr_(n) {}
-    int intValue() { return nr_; }
-    bool operator==(Vif s) { return nr_ == s.nr_; }
-
-private:
-    int nr_;
-};
 
 Unit toDefaultUnit(Vif v);
 
@@ -534,7 +544,9 @@ struct FieldMatcher
     std::string str();
 };
 
-bool loadFormatBytesFromSignature(uint16_t format_signature, std::vector<uchar> *format_bytes);
+
+void registerCompactFormatForMVT(MVT mvt, uint16_t sig, std::vector<uchar> difvif);
+bool lookupCompactFormat(MVT mvt, uint16_t sig, std::vector<uchar> &format_bytes);
 
 struct Telegram;
 
@@ -542,7 +554,7 @@ bool parseDV(Telegram *t,
              std::vector<uchar> &databytes,
              std::vector<uchar>::iterator data,
              size_t data_len,
-             std::map<std::string,std::pair<int,DVEntry>> *dv_entries,
+             std::unordered_map<std::string,std::pair<int,DVEntry>> *dv_entries,
              std::vector<uchar>::iterator *format = NULL,
              size_t format_len = 0,
              uint16_t *format_hash = NULL);
@@ -554,44 +566,44 @@ bool parseWithIXML(Telegram *t,
                    int offset, // Where the hex starts in the telegram.
                    std::string hex,
                    XMQDoc *ixml_grammar,
-                   std::map<std::string,std::pair<int,DVEntry>> *dv_entries);
+                   std::unordered_map<std::string,std::pair<int,DVEntry>> *dv_entries);
 
 // Instead of using a hardcoded difvif as key in the extractDV... below,
 // find an existing difvif entry in the values based on the desired value information type.
 // Like: Volume, VolumeFlow, FlowTemperature, ExternalTemperature etc
 // in combination with the storagenr. (Later I will add tariff/subunit)
 bool findKey(MeasurementType mt, VIFRange vi, StorageNr storagenr, TariffNr tariffnr,
-             std::string *key, std::map<std::string,std::pair<int,DVEntry>> *values);
+             std::string *key, std::unordered_map<std::string,std::pair<int,DVEntry>> *values);
 // Some meters have multiple identical DIF/VIF values! Meh, they are not using storage nrs or tariff nrs.
 // So here we can pick for example nr 2 of an identical set if DIF/VIF values.
 // Nr 1 means the first found value.
 bool findKeyWithNr(MeasurementType mt, VIFRange vi, StorageNr storagenr, TariffNr tariffnr, int indexnr,
-                   std::string *key, std::map<std::string,std::pair<int,DVEntry>> *values);
+                   std::string *key, std::unordered_map<std::string,std::pair<int,DVEntry>> *values);
 
-bool hasKey(std::map<std::string,std::pair<int,DVEntry>> *values, std::string key);
+bool hasKey(std::unordered_map<std::string,std::pair<int,DVEntry>> *values, std::string key);
 
-bool extractDVuint8(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVuint8(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                     std::string key,
                     int *offset,
                     uchar *value);
 
-bool extractDVuint16(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVuint16(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                      std::string key,
                      int *offset,
                      uint16_t *value);
 
-bool extractDVuint24(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVuint24(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                      std::string key,
                      int *offset,
                      uint32_t *value);
 
-bool extractDVuint32(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVuint32(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                      std::string key,
                      int *offset,
                      uint32_t *value);
 
 // All values are scaled according to the vif and wmbusmeters scaling defaults.
-bool extractDVdouble(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVdouble(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                      std::string key,
                      int *offset,
                      double *value,
@@ -599,25 +611,25 @@ bool extractDVdouble(std::map<std::string,std::pair<int,DVEntry>> *values,
                      bool force_unsigned = false);
 
 // Extract a value without scaling. Works for 8bits to 64 bits, binary and bcd.
-bool extractDVlong(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVlong(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                    std::string key,
                    int *offset,
                    uint64_t *value);
 
 // Just copy the raw hex data into the string, not reversed or anything.
-bool extractDVHexString(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVHexString(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                         std::string key,
                         int *offset,
                         std::string *value);
 
 // Read the content and attempt to reverse and transform it into a readble string
 // based on the dif information.
-bool extractDVReadableString(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVReadableString(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                              std::string key,
                              int *offset,
                              std::string *value);
 
-bool extractDVdate(std::map<std::string,std::pair<int,DVEntry>> *values,
+bool extractDVdate(std::unordered_map<std::string,std::pair<int,DVEntry>> *values,
                    std::string key,
                    int *offset,
                    struct tm *value);

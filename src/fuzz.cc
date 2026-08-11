@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2019 Fredrik Öhrström (gpl-3.0-or-later)
+ Copyright (C) 2019-2026 Fredrik Öhrström (gpl-3.0-or-later)
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -15,15 +15,14 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include"cmdline.h"
 #include"meters.h"
 #include"printer.h"
 #include"serial.h"
 #include"util.h"
 #include"wmbus.h"
 #include"dvparser.h"
+#include"utils/fs.h"
 
-#include<string.h>
 #include<unistd.h>
 
 using namespace std;
@@ -50,7 +49,7 @@ int main(int argc, char **argv)
         }
     }
 
-    map<string,pair<int,DVEntry>> dv_entries;
+    unordered_map<string,pair<int,DVEntry>> dv_entries;
 
     Telegram t;
     vector<uchar>::iterator i = databytes.begin();

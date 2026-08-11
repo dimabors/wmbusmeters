@@ -15,8 +15,12 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "always.h"
+#include "log.h"
 #include "shell.h"
 #include "util.h"
+
+#include "utils/signal_handling.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -25,6 +29,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+using namespace std;
 
 // Posix says that this variable just exists.
 // (On some systems this is also declared in unistd.h)
@@ -80,18 +86,22 @@ void invokeShell(string program, vector<string> args, vector<string> envs)
     int status;
     if (pid == 0) {
         // I am the child!
+        restoreSignalHandlers();
         close(0); // Close stdin
 #if (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__)
-        execve(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
+        environ = (char**)&env[0];
+        execvp(program.c_str(), (char*const*)&argv[0]);
 #else
         execvpe(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
 #endif
 
         perror("Execvp failed:");
-        error("(shell) invoking %s failed!\n", program.c_str());
+        // Use _exit() to avoid running parent's atexit handlers and destructors
+        // which can deadlock in a forked child.
+        _exit(127);
     } else {
         if (pid == -1) {
-            error("(shell) could not fork!\n");
+            error(EXIT_SOCKET_ERROR, "(shell) could not fork!\n");
         }
         debug("(shell) waiting for child %d to complete.\n", pid);
         // Wait for the child to finish!
@@ -100,7 +110,10 @@ void invokeShell(string program, vector<string> args, vector<string> envs)
             // Child exited properly.
             int rc = WEXITSTATUS(status);
             debug("(shell) %s: return code %d\n", program.c_str(), rc);
-            if (rc != 0) {
+            if (rc == 127) {
+                warning("(shell) invoking %s failed!\n", program.c_str());
+            }
+            else if (rc != 0) {
                 warning("(shell) %s exited with non-zero return code: %d\n", program.c_str(), rc);
             }
         }
@@ -127,7 +140,7 @@ bool invokeBackgroundShell(string program, vector<string> args, vector<string> e
     vector<const char*> env = prepareEnv(envs);
 
     if (pipe(link) == -1) {
-        error("(bgshell) could not create pipe!\n");
+        error(EXIT_SHELL_ERROR, "(bgshell) could not create pipe!\n");
     }
 
     *pid = fork();
@@ -150,14 +163,16 @@ bool invokeBackgroundShell(string program, vector<string> args, vector<string> e
         close(0); // Close stdin
 
 #if (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__)
-        execve(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
+        environ = (char**)&env[0];
+        execvp(program.c_str(), (char*const*)&argv[0]);
 #else
         execvpe(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
 #endif
 
         perror("Execvp failed:");
-        error("(bgshell) invoking %s failed!\n", program.c_str());
-        return false;
+        // Use _exit() to avoid running parent's atexit handlers and destructors
+        // which can deadlock in a forked child.
+        _exit(127);
     }
 
     // Make reads from the pipe non-blocking.
@@ -186,6 +201,9 @@ bool stillRunning(int pid)
     if (WIFEXITED(status)) {
         // Child exited properly.
         int rc = WEXITSTATUS(status);
+        if (rc == 127) {
+            warning("(bgshell) invoking child %d failed!\n", pid);
+        }
         debug("(bgshell) %d exited with return code %d\n", pid, rc);
     }
     else if (WIFSIGNALED(status)) {
@@ -261,12 +279,13 @@ int invokeShellCaptureOutput(string program, vector<string> args, vector<string>
     vector<const char*> env = prepareEnv(envs);
 
     if (pipe(link) == -1) {
-        error("(shell) could not create pipe!\n");
+        error(EXIT_PIPE_ERROR, "(shell) could not create pipe!\n");
     }
 
     pid = fork();
     if (pid == 0) {
         // I am the child!
+        restoreSignalHandlers();
         // Redirect stdout and stderr to pipe
         dup2 (link[1], STDOUT_FILENO);
         dup2 (link[1], STDERR_FILENO);
@@ -277,14 +296,16 @@ int invokeShellCaptureOutput(string program, vector<string> args, vector<string>
         close(0); // Close stdin
 
 #if (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__)
-        execve(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
+        environ = (char**)&env[0];
+        execvp(program.c_str(), (char*const*)&argv[0]);
 #else
         execvpe(program.c_str(), (char*const*)&argv[0], (char*const*)&env[0]);
 #endif
 
         perror("Execvp failed:");
-        error("(shell) invoking %s failed!\n", program.c_str());
-        return 127;
+        // Use _exit() to avoid running parent's atexit handlers and destructors
+        // which can deadlock in a forked child.
+        _exit(127);
     }
 
     close(link[1]);
@@ -321,7 +342,12 @@ int invokeShellCaptureOutput(string program, vector<string> args, vector<string>
         if (rc != 0) {
             if (!do_not_warn_if_fail)
             {
-                warning("(shell) exited with non-zero return code: %d\n", rc);
+                if (rc == 127) {
+                    warning("(shell) invoking %s failed!\n", program.c_str());
+                }
+                else {
+                    warning("(shell) exited with non-zero return code: %d\n", rc);
+                }
             }
         }
     }
@@ -342,7 +368,10 @@ void detectProcesses(string cmd, vector<int> *pids)
     vector<string> envs;
     args.push_back(cmd);
     string out;
-    invokeShellCaptureOutput("/bin/pidof", args, envs, &out, true);
+
+    int rc = invokeShellCaptureOutput("pgrep", args, envs, &out, true);
+
+    if (!rc) return;
 
     char buf[out.size()+1];
     strcpy(buf, out.c_str());

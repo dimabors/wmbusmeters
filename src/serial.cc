@@ -15,12 +15,17 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"util.h"
 #include"rtlsdr.h"
 #include"serial.h"
 #include"shell.h"
 #include"threads.h"
 #include"timings.h"
+
+#include "utils/fs.h"
+#include "utils/signal_handling.h"
 
 #include <algorithm>
 #include <assert.h>
@@ -35,7 +40,9 @@
 #include <sys/select.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <stdio.h>
 #include <termios.h>
 #include <unistd.h>
@@ -43,6 +50,8 @@
 #if defined(__linux__)
 #include <linux/serial.h>
 #endif
+
+using namespace std;
 
 // return a positive integer (file descriptor) on success.
 // return -1 for failure to open. return -2 for already locked.
@@ -78,6 +87,7 @@ struct SerialCommunicationManagerImp : public SerialCommunicationManager
                                                        vector<string> envs, string purpose);
     shared_ptr<SerialDevice> createSerialDeviceFile(string file, string purpose);
     shared_ptr<SerialDevice> createSerialDeviceSimulator();
+    shared_ptr<SerialDevice> createSerialDeviceSocket(string path, string purpose);
 
     void listenTo(SerialDevice *sd, function<void()> cb);
     void onDisappear(SerialDevice *sd, function<void()> cb);
@@ -268,18 +278,13 @@ int SerialDeviceImp::receive(vector<uchar> *data)
     }
     data->resize(num_read);
 
-    if (isDebugEnabled())
+    if (expecting_ascii_)
     {
-        if (expecting_ascii_)
-        {
-            string msg = safeString(*data);
-            debug("(serial) received ascii \"%s\"\n", msg.c_str());
-        }
-        else
-        {
-            string msg = bin2hex(*data);
-            debug("(serial) received binary \"%s\"\n", msg.c_str());
-        }
+        debug("(serial) received ascii \"%s\"\n", safeString(*data).c_str());
+    }
+    else
+    {
+        debug("(serial) received binary \"%s\"\n", bin2hex(*data).c_str());
     }
 
     if (close_me) close();
@@ -328,13 +333,13 @@ bool SerialDeviceTTY::open(bool fail_if_not_ok)
     fd_ = openSerialTTY(device_.c_str(), baud_rate_, parity_);
     if (fd_ == -1)
     {
-        if (fail_if_not_ok) error("Could not open %s with %d baud N81\n", device_.c_str(), baud_rate_);
+        if (fail_if_not_ok) error(EXIT_SERIAL_ERROR, "Could not open %s with %d baud N81\n", device_.c_str(), baud_rate_);
         verbose("(serialtty) could not open %s with %d baud N81\n", device_.c_str(), baud_rate_);
         return false;
     }
     if (fd_ == -2)
     {
-        if (fail_if_not_ok) error("Device %s is already in use and locked.\n", device_.c_str());
+        if (fail_if_not_ok) error(EXIT_SERIAL_ERROR, "Device %s is already in use and locked.\n", device_.c_str());
         verbose("(serialtty) device %s is already in use and locked.\n", device_.c_str());
         return false;
     }
@@ -375,19 +380,13 @@ bool SerialDeviceTTY::send(vector<uchar> &data)
         {
             if (errno==EINTR) continue;
             rc = false;
-            if (isDebugEnabled()) {
-                string msg = bin2hex(data);
-                debug("(serial %s) failed to send \"%s\"\n", device_.c_str(), msg.c_str());
-            }
+            debug("(serial %s) failed to send \"%s\"\n", device_.c_str(), bin2hex(data).c_str());
             goto end;
         }
         if (written == n) break;
     }
 
-    if (isDebugEnabled()) {
-        string msg = bin2hex(data);
-        debug("(serial %s) sent \"%s\"\n", device_.c_str(), msg.c_str());
-    }
+    debug("(serial %s) sent \"%s\"\n", device_.c_str(), bin2hex(data).c_str());
 
     if (signalsInstalled())
     {
@@ -532,10 +531,7 @@ bool SerialDeviceCommand::send(vector<uchar> &data)
         if (written == n) break;
     }
 
-    if (isDebugEnabled()) {
-        string msg = bin2hex(data);
-        debug("(serial %s) sent \"%s\"\n", command_.c_str(), msg.c_str());
-    }
+    debug("(serial %s) sent \"%s\"\n", command_.c_str(), bin2hex(data).c_str());
 
     end:
     return rc;
@@ -591,7 +587,7 @@ bool SerialDeviceFile::open(bool fail_if_not_ok)
         {
             if (fail_if_not_ok)
             {
-                error("Could not open file %s for reading.\n", file_.c_str());
+                error(EXIT_SERIAL_ERROR, "Could not open file %s for reading.\n", file_.c_str());
             }
             verbose("(serialdevicefile) could not open file %s for reading.\n", file_.c_str());
             return false;
@@ -668,6 +664,224 @@ struct SerialDeviceSimulator : public SerialDeviceImp
     vector<uchar> data_;
 };
 
+struct SerialDeviceSocket : public SerialDeviceImp
+{
+    SerialDeviceSocket(string path, SerialCommunicationManagerImp *manager, string purpose);
+    ~SerialDeviceSocket();
+
+    bool open(bool fail_if_not_ok);
+    void close();
+    bool send(vector<uchar> &data);
+    bool working();
+    string device() { return path_; }
+
+    bool acceptClient();
+    void disconnectClient();
+    bool hasClient() { return client_fd_ >= 0; }
+
+    int receive(vector<uchar> *data);
+
+private:
+
+    string path_;
+    int listen_fd_ = -1;
+    int client_fd_ = -1;
+};
+
+SerialDeviceSocket::SerialDeviceSocket(string path,
+                                       SerialCommunicationManagerImp *manager,
+                                       string purpose)
+    : SerialDeviceImp(manager, purpose)
+{
+    path_ = path;
+}
+
+SerialDeviceSocket::~SerialDeviceSocket()
+{
+    close();
+}
+
+bool SerialDeviceSocket::open(bool fail_if_not_ok)
+{
+    listen_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd_ < 0)
+    {
+        if (fail_if_not_ok) error(EXIT_SOCKET_ERROR, "Could not create unix socket: %s\n", strerror(errno));
+        verbose("(serialsocket) could not create unix socket: %s\n", strerror(errno));
+        return false;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    if (path_.length() >= sizeof(addr.sun_path))
+    {
+        if (fail_if_not_ok) error(EXIT_SOCKET_ERROR, "Socket path too long: %s\n", path_.c_str());
+        verbose("(serialsocket) socket path too long: %s\n", path_.c_str());
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        return false;
+    }
+    strncpy(addr.sun_path, path_.c_str(), sizeof(addr.sun_path) - 1);
+
+    unlink(path_.c_str());
+
+    if (::bind(listen_fd_, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        if (fail_if_not_ok) error(EXIT_SOCKET_ERROR, "Could not bind unix socket %s: %s\n", path_.c_str(), strerror(errno));
+        verbose("(serialsocket) could not bind unix socket %s: %s\n", path_.c_str(), strerror(errno));
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        return false;
+    }
+
+    if (listen(listen_fd_, 1) < 0)
+    {
+        if (fail_if_not_ok) error(EXIT_SOCKET_ERROR, "Could not listen on unix socket %s: %s\n", path_.c_str(), strerror(errno));
+        verbose("(serialsocket) could not listen on unix socket %s: %s\n", path_.c_str(), strerror(errno));
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        unlink(path_.c_str());
+        return false;
+    }
+
+    int flags = fcntl(listen_fd_, F_GETFL);
+    fcntl(listen_fd_, F_SETFL, flags | O_NONBLOCK);
+
+    fd_ = listen_fd_;
+
+    verbose("(serialsocket) listening on %s fd %d (%s)\n", path_.c_str(), fd_, purpose_.c_str());
+    return true;
+}
+
+void SerialDeviceSocket::close()
+{
+    if (client_fd_ >= 0)
+    {
+        ::close(client_fd_);
+        client_fd_ = -1;
+    }
+    if (listen_fd_ >= 0)
+    {
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        unlink(path_.c_str());
+    }
+    fd_ = -1;
+
+    manager_->tickleEventLoop();
+    verbose("(serialsocket) closed %s (%s)\n", path_.c_str(), purpose_.c_str());
+}
+
+bool SerialDeviceSocket::acceptClient()
+{
+    if (client_fd_ >= 0) return true;
+
+    struct sockaddr_un client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int cfd = accept(listen_fd_, (struct sockaddr *)&client_addr, &client_len);
+    if (cfd < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return false;
+        verbose("(serialsocket) accept failed: %s\n", strerror(errno));
+        return false;
+    }
+
+    int flags = fcntl(cfd, F_GETFL);
+    fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
+
+    client_fd_ = cfd;
+    fd_ = client_fd_;
+
+    manager_->tickleEventLoop();
+    verbose("(serialsocket) accepted client on %s fd %d\n", path_.c_str(), client_fd_);
+    return true;
+}
+
+void SerialDeviceSocket::disconnectClient()
+{
+    if (client_fd_ >= 0)
+    {
+        verbose("(serialsocket) disconnecting client fd %d on %s\n", client_fd_, path_.c_str());
+        ::close(client_fd_);
+        client_fd_ = -1;
+    }
+    fd_ = listen_fd_;
+
+    manager_->tickleEventLoop();
+}
+
+bool SerialDeviceSocket::working()
+{
+    return listen_fd_ >= 0;
+}
+
+bool SerialDeviceSocket::send(vector<uchar> &data)
+{
+    if (client_fd_ < 0) return false;
+
+    LOCK_WRITE_SERIAL(send_socket);
+
+    int n = data.size();
+    int written = 0;
+    while (written < n)
+    {
+        int nw = write(client_fd_, &data[written], n - written);
+        if (nw > 0) written += nw;
+        if (nw < 0)
+        {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN) break;
+            verbose("(serialsocket) send failed: %s\n", strerror(errno));
+            return false;
+        }
+    }
+
+    debug("(serialsocket) sent \"%s\"\n", safeString(data).c_str());
+
+    return true;
+}
+
+int SerialDeviceSocket::receive(vector<uchar> *data)
+{
+    LOCK_READ_SERIAL(receive_socket);
+
+    data->clear();
+
+    if (client_fd_ < 0) return 0;
+
+    int num_read = 0;
+    while (true)
+    {
+        data->resize(num_read + 1024);
+        int nr = read(client_fd_, &((*data)[num_read]), 1024);
+        if (nr > 0)
+        {
+            num_read += nr;
+        }
+        if (nr == 0)
+        {
+            // Client disconnected
+            data->resize(num_read);
+            return num_read;
+        }
+        if (nr < 0)
+        {
+            if (errno == EINTR && client_fd_ >= 0) continue;
+            if (errno == EAGAIN) break;
+            break;
+        }
+    }
+    data->resize(num_read);
+
+    if (num_read != 0)
+    {
+        debug("(serialsocket) received \"%s\"\n", safeString(*data).c_str());
+    }
+
+    return num_read;
+}
+
 SerialCommunicationManagerImp::SerialCommunicationManagerImp(time_t exit_after_seconds,
                                                              bool start_event_loop)
 {
@@ -711,13 +925,18 @@ shared_ptr<SerialDevice> SerialCommunicationManagerImp::createSerialDeviceSimula
     return addSerialDeviceForManagement(new SerialDeviceSimulator(this, ""));
 }
 
+shared_ptr<SerialDevice> SerialCommunicationManagerImp::createSerialDeviceSocket(string path, string purpose)
+{
+    return addSerialDeviceForManagement(new SerialDeviceSocket(path, this, purpose));
+}
+
 void SerialCommunicationManagerImp::listenTo(SerialDevice *sd, function<void()> cb)
 {
     if (sd == NULL) return;
     SerialDeviceImp *si = dynamic_cast<SerialDeviceImp*>(sd);
     if (!si)
     {
-        error("Internal error: Invalid serial device passed to listenTo.\n");
+        error(EXIT_SERIAL_ERROR, "Internal error: Invalid serial device passed to listenTo.\n");
     }
     si->on_data_ = cb;
 }
@@ -728,7 +947,7 @@ void SerialCommunicationManagerImp::onDisappear(SerialDevice *sd, function<void(
     SerialDeviceImp *si = dynamic_cast<SerialDeviceImp*>(sd);
     if (!si)
     {
-        error("Internal error: Invalid serial device passed to onDisappear.\n");
+        error(EXIT_SERIAL_ERROR, "Internal error: Invalid serial device passed to onDisappear.\n");
     }
     si->on_disappear_ = cb;
 }
@@ -1234,13 +1453,56 @@ bool SerialCommunicationManagerImp::removeNonWorking(string device)
 }
 
 
-#if not defined(__linux__)
+#if (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__)
+
+int sorty(const struct dirent **a, const struct dirent **b)
+{
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+vector<string> SerialCommunicationManagerImp::listSerialTTYs()
+{
+    struct dirent **entries;
+    vector<string> found_serials;
+    string devdir = "/dev/";
+
+    int n = scandir(devdir.c_str(), &entries, NULL, sorty);
+    if (n < 0)
+    {
+        perror("scandir");
+        return found_serials;
+    }
+
+    for (int i = 0; i < n; ++i)
+    {
+        string name = entries[i]->d_name;
+        free(entries[i]);
+
+        if (name == ".." || name == ".")
+        {
+            continue;
+        }
+
+        // Match cu.usbserial-* and cu.usbmodem* devices (USB serial adapters)
+        if (name.rfind("cu.usbserial", 0) == 0 ||
+            name.rfind("cu.usbmodem", 0) == 0)
+        {
+            found_serials.push_back(devdir + name);
+        }
+    }
+    free(entries);
+
+    return found_serials;
+}
+
+#elif not defined(__linux__)
+
 vector<string> SerialCommunicationManagerImp::listSerialTTYs()
 {
     vector<string> list;
-    list.push_back("Please add code here!");
     return list;
 }
+
 #endif
 
 #if defined(__linux__)

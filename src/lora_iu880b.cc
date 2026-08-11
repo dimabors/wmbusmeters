@@ -15,16 +15,20 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"lora_iu880b.h"
 #include"serial.h"
 #include"threads.h"
+#include"util.h"
+
+#include"crypto/crc16.h"
 
 #include<assert.h>
 #include<pthread.h>
-#include<errno.h>
 #include<memory.h>
 #include<semaphore.h>
 #include<unistd.h>
@@ -112,7 +116,7 @@ struct RadioConfig_IU880B
     }
 };
 
-struct LoRaIU880B : public virtual BusDeviceCommonImplementation
+struct LoRaIU880B : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -268,7 +272,7 @@ bool LoRaIU880B::deviceSetLinkModes(LinkModeSet lms)
     if (!canSetLinkModes(lms))
     {
         string modes = lms.hr();
-        error("(iu880b) setting link mode(s) %s is not supported for iu880b\n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(iu880b) setting link mode(s) %s is not supported for iu880b\n", modes.c_str());
     }
 
     LOCK_WMBUS_EXECUTING_COMMAND(set_link_modes);

@@ -15,15 +15,17 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"rtlsdr.h"
 #include"serial.h"
+#include"util.h"
 
 #include<assert.h>
 #include<fcntl.h>
-#include<grp.h>
 #include<pthread.h>
 #include<semaphore.h>
 #include<string.h>
@@ -34,7 +36,7 @@
 
 using namespace std;
 
-struct WMBusRTL433 : public virtual BusDeviceCommonImplementation
+struct WMBusRTL433 : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -91,7 +93,7 @@ shared_ptr<BusDevice> openRTL433(Detected detected, string bin_dir, bool daemon,
     bool ok = parseExtras(detected.specified_device.extras, &extras);
     if (!ok)
     {
-        error("(rtl433) invalid extra parameters to rtl433 (%s)\n", detected.specified_device.extras.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(rtl433) invalid extra parameters to rtl433 (%s)\n", detected.specified_device.extras.c_str());
     }
     string ppm = "";
     if (extras.size() > 0)
@@ -122,7 +124,7 @@ shared_ptr<BusDevice> openRTL433(Detected detected, string bin_dir, bool daemon,
         {
             if (daemon)
             {
-                error("(rtl433) error: when starting as daemon, wmbusmeters looked for %s/rtl_433 and %s/rtl_sdr, but found neither!\n",
+                error(EXIT_BUS_DEVICE_ERROR, "(rtl433) error: when starting as daemon, wmbusmeters looked for %s/rtl_433 and %s/rtl_sdr, but found neither!\n",
                       bin_dir.c_str(), "/usr/bin");
             }
             else
@@ -291,11 +293,7 @@ FrameStatus WMBusRTL433::checkRTL433Frame(vector<uchar> &data,
 
     if (data.size() == 0) return PartialFrame;
 
-    if (isDebugEnabled())
-    {
-        string msg = safeString(data);
-        debug("(rtl433) checkRTL433Frame \"%s\"\n", msg.c_str());
-    }
+    debug("(rtl433) checkRTL433Frame \"%s\"\n", safeString(data).c_str());
 
     int payload_len = 0;
     size_t eolp = 0;

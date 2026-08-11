@@ -19,9 +19,14 @@
 #include<string>
 #include<map>
 
-#include"util.h"
+#include"always.h"
+#include"config.h"
 #include"drivers.h"
+#include"log.h"
 #include"meters.h"
+#include"util.h"
+
+#include "utils/fs.h"
 
 using namespace std;
 
@@ -44,19 +49,6 @@ void loadDriversFromDir(std::string dir)
         string s = loadDriver(file_name, NULL);
     }
 }
-
-struct BuiltinDriver
-{
-    const char *name;
-    const char *aliases;
-    const char *content;
-    bool loaded;
-};
-
-struct MapToDriver {
-    MVT mvt;
-    const char *name;
-};
 
 #include"generated_database.cc"
 
@@ -83,28 +75,32 @@ bool loadBuiltinDriver(string driver_name)
     return true;
 }
 
-void loadAllBuiltinDrivers()
-{
-    for (auto &p : builtins_name_lookup_)
-    {
-        if (!p.second->loaded)
-        {
-            loadBuiltinDriver(p.first);
-            p.second->loaded = true;
-        }
-    }
-}
-
 const char *findBuiltinDriver(uint16_t mfct, uchar ver, uchar type)
 {
-    uint32_t key = mfct << 16  | ver << 8 | type;
-    if (builtins_mvt_lookup_.count(key) == 0)
+    auto find = [&](uint16_t m, uchar v, uchar t) -> const char*
     {
-        // Workaround for weird aPT and iTW mfcts.
-        key = (mfct & 0x7fff) << 16  | ver << 8 | type;
-        if (builtins_mvt_lookup_.count(key) == 0) return NULL;
+        uint32_t key = m << 16 | v << 8 | t;
+        if (builtins_mvt_lookup_.count(key)) return builtins_mvt_lookup_[key];
+        return NULL;
+    };
+
+    uint16_t normalized_mfct = mfct & 0x7fff;
+    uint16_t mfcts[] = { mfct, normalized_mfct };
+    uchar versions[] = { ver, 0xff };
+    uchar types[] = { type, 0xff };
+
+    for (uint16_t m : mfcts)
+    {
+        for (uchar v : versions)
+        {
+            for (uchar t : types)
+            {
+                const char *name = find(m, v, t);
+                if (name) return name;
+            }
+        }
     }
-    return builtins_mvt_lookup_[key];
+    return NULL;
 }
 
 void removeBuiltinDriver(string name)
@@ -150,4 +146,22 @@ void prepareBuiltinDrivers()
             builtins_mvts_[i].mvt.type;
         builtins_mvt_lookup_[key] = builtins_mvts_[i].name;
     }
+}
+
+void forceLoadAllDrivers(Configuration *config)
+{
+    for (auto &p : builtins_name_lookup_)
+    {
+        if (!p.second->loaded)
+        {
+            loadBuiltinDriver(p.first);
+            p.second->loaded = true;
+        }
+    }
+
+    // You can specify another drivers dir with --driversdir=/foo/bar/drivers
+    string dir = config->drivers_dir;
+    if (dir == "") dir = "/etc/wmbusmeters.drivers.d";
+    // This will load any xmq files from this dir and potentially override the builtin drivers.
+    loadDriversFromDir(dir);
 }

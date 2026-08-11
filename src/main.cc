@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2017-2022 Fredrik Öhrström (gpl-3.0-or-later)
+ Copyright (C) 2017-2026 Fredrik Öhrström (gpl-3.0-or-later)
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -26,8 +26,17 @@
 #include"shell.h"
 #include"threads.h"
 #include"util.h"
-#include"version.h"
 #include"wmbus.h"
+
+#include"utils/alarm.h"
+#include"utils/download.h"
+
+#include"authors.h"
+#include"license.h"
+#include"short_manual.h"
+#include"version.h"
+
+#include "utils/signal_handling.h"
 
 #include <algorithm>
 #include <errno.h>
@@ -51,7 +60,7 @@ SpecifiedDevice *find_specified_device_from_detected(Configuration *c, Detected 
 void list_fields(Configuration *config, string meter_type);
 void print_driver(Configuration *config, string meter_type);
 void list_shell_envs(Configuration *config, string meter_type);
-void list_meters(Configuration *config, bool cli);
+void list_drivers(Configuration *config, bool cli);
 void list_units();
 void log_start_information(Configuration *config);
 void oneshot_check(Configuration *config, Telegram *t, Meter *meter);
@@ -85,8 +94,6 @@ int main(int argc, char **argv)
 {
     tzset(); // Load the current timezone.
 
-    setVersion(VERSION);
-
     enableEarlyLoggingFromCommandLine(argc, argv);
     prepareBuiltinDrivers();
 
@@ -94,97 +101,73 @@ int main(int argc, char **argv)
 
     if (config->version)
     {
-        printf("wmbusmeters: %s\n", getVersion());
+        printf("wmbusmeters: %s\n", VERSION);
         printf(COMMIT "\n");
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->license)
     {
-        const char * authors =
-#include"authors.h"
-        const char * license =
-            R"LICENSE(
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-You can download the source here: https://github.com/wmbusmeters/wmbusmeters
-But you can also request the source from the person/company that
-provided you with this binary. Read the full license for all details.
-
-)LICENSE";
-        printf("%s%s", authors, license);
-        exit(0);
+        printf("%s%s", AUTHORS, LICENSE);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->list_shell_envs)
     {
         list_shell_envs(config.get(), config->list_meter);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->list_fields)
     {
         list_fields(config.get(), config->list_meter);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->print_driver)
     {
         print_driver(config.get(), config->list_meter);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
-    if (config->list_meters)
+    if (config->list_drivers)
     {
-        list_meters(config.get(), true);
-        exit(0);
+        list_drivers(config.get(), true);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->list_units)
     {
         list_units();
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->need_help)
     {
         printf("wmbusmeters version: " VERSION "\n");
-        const char *short_manual =
-#include"short_manual.h"
-        puts(short_manual);
-        exit(0);
+        puts(SHORT_MANUAL);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->daemon)
     {
         start_daemon(config->pid_file, config->config_root, config->overrides);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
     if (config->useconfig)
     {
         start_using_config_files(config->config_root, false, config->overrides);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
     else
     {
         // We want the data visible in the log file asap!
         setbuf(stdout, NULL);
         start(config.get());
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
-    error("(main) internal error\n");
+    error(EXIT_FAILURE, "(main) internal error\n");
 }
 
 shared_ptr<Printer> create_printer(Configuration *config)
@@ -214,7 +197,7 @@ void list_shell_envs(Configuration *config, string meter_driver)
     mi.driver_name = meter_driver;
     if (!lookupDriverInfo(meter_driver, &di))
     {
-        error("No such driver %s %s\n", meter_driver.c_str(), removedDriverExplanation(meter_driver).c_str());
+        error(EXIT_USAGE_ERROR, "No such driver %s %s\n", meter_driver.c_str(), removedDriverExplanation(meter_driver).c_str());
     }
     meter = di.construct(mi);
 
@@ -264,7 +247,7 @@ void list_fields(Configuration *config, string meter_driver)
     mi.driver_name = meter_driver;
     if (!lookupDriverInfo(meter_driver, &di))
     {
-        error("No such driver %s\n", meter_driver.c_str());
+        error(EXIT_USAGE_ERROR, "No such driver %s\n", meter_driver.c_str());
     }
     meter = di.construct(mi);
 
@@ -326,8 +309,6 @@ void list_fields(Configuration *config, string meter_driver)
 
 void print_driver(Configuration *config, string meter_driver)
 {
-    loadAllBuiltinDrivers();
-
     MeterInfo mi;
     shared_ptr<Meter> meter;
     DriverInfo di;
@@ -335,7 +316,7 @@ void print_driver(Configuration *config, string meter_driver)
     mi.driver_name = meter_driver;
     if (!lookupDriverInfo(meter_driver, &di))
     {
-        error("info='No such driver %s'\n", meter_driver.c_str());
+        error(EXIT_USAGE_ERROR, "info='No such driver %s'\n", meter_driver.c_str());
     }
     meter = di.construct(mi);
 
@@ -350,9 +331,9 @@ void print_driver(Configuration *config, string meter_driver)
     }
 }
 
-void list_meters(Configuration *config, bool cli)
+void list_drivers(Configuration *config, bool cli)
 {
-    loadAllBuiltinDrivers();
+    forceLoadAllDrivers(config);
 
     for (DriverInfo *di : allDrivers())
     {
@@ -382,10 +363,10 @@ void list_meters(Configuration *config, bool cli)
             n -= inc;
         }
 
-        if (config->list_meters_search == "" ||
-            stringFoundCaseIgnored(infotxt, config->list_meters_search) ||
-            stringFoundCaseIgnored(mname.c_str(), config->list_meters_search) ||
-            stringFoundCaseIgnored(buf, config->list_meters_search))
+        if (config->list_drivers_search == "" ||
+            stringFoundCaseIgnored(infotxt, config->list_drivers_search) ||
+            stringFoundCaseIgnored(mname.c_str(), config->list_drivers_search) ||
+            stringFoundCaseIgnored(buf, config->list_drivers_search))
         {
             if (cli)
             {
@@ -538,7 +519,7 @@ void setup_log_file(Configuration *config)
             if (config->daemon) {
                 warning("Could not open log file %s will use syslog instead.\n", config->logfile.c_str());
             } else {
-                error("Could not open log file %s\n", config->logfile.c_str());
+                error(EXIT_FILE_ERROR, "Could not open log file %s\n", config->logfile.c_str());
             }
         }
     }
@@ -581,7 +562,7 @@ bool start(Configuration *config)
     {
         if (config->num_wmbus_devices > 0 && config->all_device_linkmodes_specified.empty())
         {
-            error("Wmbus devices found but no meters supplied. You must supply which link modes to listen to. Eg. auto:c1\n");
+            error(EXIT_DEVICE_ERROR, "Wmbus devices found but no meters supplied. You must supply which link modes to listen to. Eg. auto:c1\n");
         }
     }
 
@@ -592,6 +573,7 @@ bool start(Configuration *config)
     traceEnabled(config->trace);
     logTelegramsEnabled(config->logtelegrams);
     setNoNetwork(config->no_net);
+    setBasicAuth(config->basic_auth_cred.c_str());
 
     if (config->addtimestamps == AddLogTimestamps::NotSet)
     {
@@ -654,7 +636,8 @@ bool start(Configuration *config)
     // We assume this is possible since we are going to run for a long time as a daemon.
     if (config->daemon)
     {
-        list_meters(config, false);
+        forceLoadAllDrivers(config);
+        list_drivers(config, false);
     }
 
     bus_manager_->detectAndConfigureWmbusDevices(config, DetectionType::STDIN_FILE_SIMULATION);
@@ -699,7 +682,6 @@ bool start(Configuration *config)
         else if (!config->analyze)
         {
             if (!config->logsummary) notice("No meters configured. Printing id:s of all telegrams heard!\n");
-
             meter_manager_->onTelegram([](AboutTelegram &about, vector<uchar> frame) {
                     Telegram t;
                     t.about = about;
@@ -765,7 +747,7 @@ void start_daemon(string pid_file, string root, ConfigOverrides overrides)
     pid_t pid = fork();
     if (pid < 0)
     {
-        error("Could not fork.\n");
+        error(EXIT_SHELL_ERROR, "Could not fork.\n");
     }
     if (pid > 0)
     {
@@ -785,7 +767,7 @@ void start_daemon(string pid_file, string root, ConfigOverrides overrides)
     }
 
     if ((chdir("/")) < 0) {
-        error("Could not change to root as current working directory.");
+        error(EXIT_FAILURE, "Could not change to root as current working directory.");
     }
 
     close(STDIN_FILENO);
@@ -793,13 +775,13 @@ void start_daemon(string pid_file, string root, ConfigOverrides overrides)
     close(STDERR_FILENO);
 
     if (open("/dev/null", O_RDONLY) == -1) {
-        error("Failed to reopen stdin while daemonising (errno=%d)",errno);
+        error(EXIT_FAILURE, "Failed to reopen stdin while daemonising (errno=%d)",errno);
     }
     if (open("/dev/null", O_WRONLY) == -1) {
-        error("Failed to reopen stdout while daemonising (errno=%d)",errno);
+        error(EXIT_FAILURE, "Failed to reopen stdout while daemonising (errno=%d)",errno);
     }
     if (open("/dev/null", O_RDWR) == -1) {
-        error("Failed to reopen stderr while daemonising (errno=%d)",errno);
+        error(EXIT_FAILURE, "Failed to reopen stderr while daemonising (errno=%d)",errno);
     }
 
     // In daemon mode, dynamically downloaded drivers will be stored in
@@ -818,16 +800,16 @@ void start_using_config_files(string root, bool is_daemon, ConfigOverrides overr
     {
         shared_ptr<Configuration> config = loadConfiguration(root, overrides);
         config->daemon = is_daemon;
-        if (overrides.listmeters_override != "")
+        if (overrides.listdrivers_override != "")
         {
-            if (overrides.listmeters_override != "!")
+            if (overrides.listdrivers_override != "!")
             {
-                config->list_meters_search = overrides.listmeters_override;
+                config->list_drivers_search = overrides.listdrivers_override;
             }
             // We have specified a listmeters override. We want to list the meters.
             // Otherwise avoid listing the meters since it triggers a load of all meters
             // and this takes some time.
-            list_meters(config.get(), false);
+            list_drivers(config.get(), false);
             return;
         }
         if (overrides.listfields_override != "")
@@ -852,12 +834,12 @@ void write_pid(string pid_file, int pid)
 {
     FILE *pidf = fopen(pid_file.c_str(), "w");
     if (!pidf) {
-        error("Could not open pid file \"%s\" for writing!\n", pid_file.c_str());
+        error(EXIT_FILE_ERROR, "Could not open pid file \"%s\" for writing!\n", pid_file.c_str());
     }
     if (pid > 0) {
         int n = fprintf(pidf, "%d\n", pid);
         if (!n) {
-            error("Could not write pid (%d) to file \"%s\"!\n", pid, pid_file.c_str());
+            error(EXIT_FILE_ERROR, "Could not write pid (%d) to file \"%s\"!\n", pid, pid_file.c_str());
         }
         notice("(wmbusmeters) started %s\n", pid_file.c_str());
     }

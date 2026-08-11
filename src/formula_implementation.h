@@ -31,8 +31,8 @@ struct NumericFormula
     SIUnit &siunit() { return siunit_; }
     // Calculate the formula and return the value in the given "to" unit.
     virtual double calculate(SIUnit to) = 0;
-    virtual string str() = 0;
-    virtual string tree() = 0;
+    virtual std::string str() = 0;
+    virtual std::string tree() = 0;
     virtual ~NumericFormula() = 0;
 
     FormulaImplementation *formula() { return formula_; }
@@ -47,8 +47,8 @@ struct NumericFormulaConstant : public NumericFormula
 {
     NumericFormulaConstant(FormulaImplementation *f, Unit u, double c) : NumericFormula(f, u), constant_(c) {}
     double calculate(SIUnit to);
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
     ~NumericFormulaConstant();
 
     private:
@@ -58,17 +58,17 @@ struct NumericFormulaConstant : public NumericFormula
 
 struct NumericFormulaMeterField : public NumericFormula
 {
-    NumericFormulaMeterField(FormulaImplementation *f, Unit u, string v, Quantity q)
+    NumericFormulaMeterField(FormulaImplementation *f, Unit u, std::string v, Quantity q)
         : NumericFormula(f, u), vname_(v), quantity_(q) {}
 
     double calculate(SIUnit to);
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
     ~NumericFormulaMeterField();
 
     private:
 
-    string vname_;
+    std::string vname_;
     Quantity quantity_;
 };
 
@@ -77,8 +77,8 @@ struct NumericFormulaDVEntryField : public NumericFormula
     NumericFormulaDVEntryField(FormulaImplementation *f, Unit u, DVEntryCounterType ct) : NumericFormula(f, u), counter_(ct) {}
 
     double calculate(SIUnit to);
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
     ~NumericFormulaDVEntryField();
 
     private:
@@ -89,9 +89,9 @@ struct NumericFormulaDVEntryField : public NumericFormula
 struct NumericFormulaPair : public NumericFormula
 {
     NumericFormulaPair(FormulaImplementation *f, SIUnit siu,
-                       unique_ptr<NumericFormula> &a,
-                       unique_ptr<NumericFormula> &b,
-                       string name, string op)
+                       std::unique_ptr<NumericFormula> &a,
+                       std::unique_ptr<NumericFormula> &b,
+                       std::string name, std::string op)
         : NumericFormula(f, siu),
         left_(std::move(a)),
         right_(std::move(b)),
@@ -99,8 +99,8 @@ struct NumericFormulaPair : public NumericFormula
         op_(op)
     {}
 
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
     ~NumericFormulaPair();
 
 protected:
@@ -114,8 +114,8 @@ protected:
 struct NumericFormulaAddition : public NumericFormulaPair
 {
     NumericFormulaAddition(FormulaImplementation *f, SIUnit siu,
-                           unique_ptr<NumericFormula> &a,
-                           unique_ptr<NumericFormula> &b)
+                           std::unique_ptr<NumericFormula> &a,
+                           std::unique_ptr<NumericFormula> &b)
         : NumericFormulaPair(f, siu, a, b, "ADD", "+") {}
 
     double calculate(SIUnit to);
@@ -126,8 +126,8 @@ struct NumericFormulaAddition : public NumericFormulaPair
 struct NumericFormulaSubtraction : public NumericFormulaPair
 {
     NumericFormulaSubtraction(FormulaImplementation *f, SIUnit siu,
-                              unique_ptr<NumericFormula> &a,
-                              unique_ptr<NumericFormula> &b)
+                              std::unique_ptr<NumericFormula> &a,
+                              std::unique_ptr<NumericFormula> &b)
         : NumericFormulaPair(f, siu, a, b, "SUB", "-") {}
 
     double calculate(SIUnit to);
@@ -138,8 +138,8 @@ struct NumericFormulaSubtraction : public NumericFormulaPair
 struct NumericFormulaMultiplication : public NumericFormulaPair
 {
     NumericFormulaMultiplication(FormulaImplementation *f, SIUnit siu,
-                                 unique_ptr<NumericFormula> &a,
-                                 unique_ptr<NumericFormula> &b)
+                                 std::unique_ptr<NumericFormula> &a,
+                                 std::unique_ptr<NumericFormula> &b)
         : NumericFormulaPair(f, siu, a, b, "TIMES", "×") {}
 
     double calculate(SIUnit to);
@@ -150,8 +150,8 @@ struct NumericFormulaMultiplication : public NumericFormulaPair
 struct NumericFormulaDivision : public NumericFormulaPair
 {
     NumericFormulaDivision(FormulaImplementation *f, SIUnit siu,
-                           unique_ptr<NumericFormula> &a,
-                           unique_ptr<NumericFormula> &b)
+                           std::unique_ptr<NumericFormula> &a,
+                           std::unique_ptr<NumericFormula> &b)
         : NumericFormulaPair(f, siu, a, b, "DIV", "÷") {}
 
     double calculate(SIUnit to);
@@ -162,9 +162,9 @@ struct NumericFormulaDivision : public NumericFormulaPair
 struct NumericFormulaExponentiation : public NumericFormulaPair
 {
     NumericFormulaExponentiation(FormulaImplementation *f, SIUnit siu,
-                                 unique_ptr<NumericFormula> &a,
-                                 unique_ptr<NumericFormula> &b)
-        : NumericFormulaPair(f, siu, a, b, "EXP", "^") {}
+                                 std::unique_ptr<NumericFormula> &a,
+                                 std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "POW", "**") {}
 
     double calculate(SIUnit to);
 
@@ -174,18 +174,236 @@ struct NumericFormulaExponentiation : public NumericFormulaPair
 struct NumericFormulaSquareRoot : public NumericFormula
 {
     NumericFormulaSquareRoot(FormulaImplementation *f, SIUnit siu,
-                             unique_ptr<NumericFormula> &inner)
+                             std::unique_ptr<NumericFormula> &inner)
         : NumericFormula(f, siu), inner_(std::move(inner)) {}
 
     double calculate(SIUnit to);
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
 
     ~NumericFormulaSquareRoot();
 
 private:
 
     std::unique_ptr<NumericFormula> inner_;
+};
+
+struct NumericFormulaRound : public NumericFormula
+{
+    NumericFormulaRound(FormulaImplementation *f, SIUnit siu,
+                        std::unique_ptr<NumericFormula> &inner)
+        : NumericFormula(f, siu), inner_(std::move(inner)) {}
+
+    double calculate(SIUnit to);
+    std::string str();
+    std::string tree();
+
+    ~NumericFormulaRound();
+
+private:
+
+    std::unique_ptr<NumericFormula> inner_;
+};
+
+struct NumericFormulaFloor : public NumericFormula
+{
+    NumericFormulaFloor(FormulaImplementation *f, SIUnit siu,
+                        std::unique_ptr<NumericFormula> &inner)
+        : NumericFormula(f, siu), inner_(std::move(inner)) {}
+
+    double calculate(SIUnit to);
+    std::string str();
+    std::string tree();
+
+    ~NumericFormulaFloor();
+
+private:
+
+    std::unique_ptr<NumericFormula> inner_;
+};
+
+struct NumericFormulaCeil : public NumericFormula
+{
+    NumericFormulaCeil(FormulaImplementation *f, SIUnit siu,
+                       std::unique_ptr<NumericFormula> &inner)
+        : NumericFormula(f, siu), inner_(std::move(inner)) {}
+
+    double calculate(SIUnit to);
+    std::string str();
+    std::string tree();
+
+    ~NumericFormulaCeil();
+
+private:
+
+    std::unique_ptr<NumericFormula> inner_;
+};
+
+struct NumericFormulaMkDate : public NumericFormula
+{
+    NumericFormulaMkDate(FormulaImplementation *f, SIUnit siu,
+                         std::unique_ptr<NumericFormula> &year,
+                         std::unique_ptr<NumericFormula> &month,
+                         std::unique_ptr<NumericFormula> &day)
+        : NumericFormula(f, siu), year_(std::move(year)), month_(std::move(month)), day_(std::move(day)) {}
+
+    double calculate(SIUnit to);
+    std::string str();
+    std::string tree();
+
+    ~NumericFormulaMkDate();
+
+private:
+
+    std::unique_ptr<NumericFormula> year_;
+    std::unique_ptr<NumericFormula> month_;
+    std::unique_ptr<NumericFormula> day_;
+};
+
+struct NumericFormulaModulo : public NumericFormulaPair
+{
+    NumericFormulaModulo(FormulaImplementation *f, SIUnit siu,
+                         std::unique_ptr<NumericFormula> &a,
+                         std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "MOD", "%") {}
+
+    double calculate(SIUnit to);
+
+    ~NumericFormulaModulo();
+};
+
+struct NumericFormulaShiftLeft : public NumericFormulaPair
+{
+    NumericFormulaShiftLeft(FormulaImplementation *f, SIUnit siu,
+                            std::unique_ptr<NumericFormula> &a,
+                            std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "SHL", "<<") {}
+
+    double calculate(SIUnit to);
+
+    ~NumericFormulaShiftLeft();
+};
+
+struct NumericFormulaShiftRight : public NumericFormulaPair
+{
+    NumericFormulaShiftRight(FormulaImplementation *f, SIUnit siu,
+                             std::unique_ptr<NumericFormula> &a,
+                             std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "SHR", ">>") {}
+
+    double calculate(SIUnit to);
+
+    ~NumericFormulaShiftRight();
+};
+
+struct NumericFormulaEQ : public NumericFormulaPair
+{
+    NumericFormulaEQ(FormulaImplementation *f, SIUnit siu,
+                     std::unique_ptr<NumericFormula> &a,
+                     std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "EQ", "==") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaEQ();
+};
+
+struct NumericFormulaNEQ : public NumericFormulaPair
+{
+    NumericFormulaNEQ(FormulaImplementation *f, SIUnit siu,
+                      std::unique_ptr<NumericFormula> &a,
+                      std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "NEQ", "!=") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaNEQ();
+};
+
+struct NumericFormulaLT : public NumericFormulaPair
+{
+    NumericFormulaLT(FormulaImplementation *f, SIUnit siu,
+                     std::unique_ptr<NumericFormula> &a,
+                     std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "LT", "<") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaLT();
+};
+
+struct NumericFormulaGT : public NumericFormulaPair
+{
+    NumericFormulaGT(FormulaImplementation *f, SIUnit siu,
+                     std::unique_ptr<NumericFormula> &a,
+                     std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "GT", ">") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaGT();
+};
+
+struct NumericFormulaLTE : public NumericFormulaPair
+{
+    NumericFormulaLTE(FormulaImplementation *f, SIUnit siu,
+                      std::unique_ptr<NumericFormula> &a,
+                      std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "LTE", "<=") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaLTE();
+};
+
+struct NumericFormulaGTE : public NumericFormulaPair
+{
+    NumericFormulaGTE(FormulaImplementation *f, SIUnit siu,
+                      std::unique_ptr<NumericFormula> &a,
+                      std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "GTE", ">=") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaGTE();
+};
+
+struct NumericFormulaBitwiseAnd : public NumericFormulaPair
+{
+    NumericFormulaBitwiseAnd(FormulaImplementation *f, SIUnit siu,
+                              std::unique_ptr<NumericFormula> &a,
+                              std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "BAND", "&") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaBitwiseAnd();
+};
+
+struct NumericFormulaBitwiseOr : public NumericFormulaPair
+{
+    NumericFormulaBitwiseOr(FormulaImplementation *f, SIUnit siu,
+                             std::unique_ptr<NumericFormula> &a,
+                             std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "BOR", "|") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaBitwiseOr();
+};
+
+struct NumericFormulaBitwiseXor : public NumericFormulaPair
+{
+    NumericFormulaBitwiseXor(FormulaImplementation *f, SIUnit siu,
+                              std::unique_ptr<NumericFormula> &a,
+                              std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "BXOR", "^") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaBitwiseXor();
+};
+
+struct NumericFormulaLogicalAnd : public NumericFormulaPair
+{
+    NumericFormulaLogicalAnd(FormulaImplementation *f, SIUnit siu,
+                              std::unique_ptr<NumericFormula> &a,
+                              std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "LAND", "&&") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaLogicalAnd();
+};
+
+struct NumericFormulaLogicalOr : public NumericFormulaPair
+{
+    NumericFormulaLogicalOr(FormulaImplementation *f, SIUnit siu,
+                             std::unique_ptr<NumericFormula> &a,
+                             std::unique_ptr<NumericFormula> &b)
+        : NumericFormulaPair(f, siu, a, b, "LOR", "||") {}
+    double calculate(SIUnit to);
+    ~NumericFormulaLogicalOr();
 };
 
 enum class TokenType
@@ -200,8 +418,27 @@ enum class TokenType
     MINUS,
     TIMES,
     DIV,
-    EXP,
+    MOD,
+    SHL,
+    SHR,
+    EQ,
+    NEQ,
+    LT,
+    GT,
+    LTE,
+    GTE,
+    BAND,
+    BOR,
+    BXOR,
+    LAND,
+    LOR,
+    POW,
     SQRT,
+    ROUND,
+    FLOOR,
+    CEIL,
+    MKDATE,
+    COMMA,
     UNIT,
     FIELD
 };
@@ -216,23 +453,23 @@ struct Token
     size_t start;
     size_t len;
 
-    string str(const string &s);
-    string vals(const string &s);
-    double val(const string &s);
-    Unit unit(const string &s);
+    std::string str(const std::string &s);
+    std::string vals(const std::string &s);
+    double val(const std::string &s);
+    Unit unit(const std::string &s);
 
-    string withMarker(const string &s);
+    std::string withMarker(const std::string &s);
 };
 
 struct FormulaImplementation : public Formula
 {
-    bool parse(Meter *m, const string &f);
+    bool parse(Meter *m, const std::string &f);
     bool valid();
-    string errors();
+    std::string errors();
     double calculate(Unit to, DVEntry *dve = NULL, Meter *m = NULL);
     void clear();
-    string str();
-    string tree();
+    std::string str();
+    std::string tree();
     SIUnit &siUnit();
     void setMeter(Meter *m);
     void setDVEntry(DVEntry *dve);
@@ -261,6 +498,24 @@ struct FormulaImplementation : public Formula
     // Pops the single top node of the formula builder stack and pushes an squareroot on the formula builder stack.
     // The target unit will be SIUnit square rooted.
     void doSquareRoot();
+    void doRound();
+    void doFloor();
+    void doCeil();
+    void doModulo();
+    void doShiftLeft();
+    void doShiftRight();
+    void doEQ();
+    void doNEQ();
+    void doLT();
+    void doGT();
+    void doLTE();
+    void doGTE();
+    void doBitwiseAnd();
+    void doBitwiseOr();
+    void doBitwiseXor();
+    void doLogicalAnd();
+    void doLogicalOr();
+    void doMkDate();
 
     ~FormulaImplementation();
 
@@ -275,8 +530,27 @@ struct FormulaImplementation : public Formula
     size_t findMinus(size_t i);
     size_t findTimes(size_t i);
     size_t findDiv(size_t i);
-    size_t findExp(size_t i);
+    size_t findMod(size_t i);
+    size_t findShl(size_t i);
+    size_t findShr(size_t i);
+    size_t findEQ(size_t i);
+    size_t findNEQ(size_t i);
+    size_t findLT(size_t i);
+    size_t findGT(size_t i);
+    size_t findLTE(size_t i);
+    size_t findGTE(size_t i);
+    size_t findBitwiseAnd(size_t i);
+    size_t findBitwiseOr(size_t i);
+    size_t findBitwiseXor(size_t i);
+    size_t findLogicalAnd(size_t i);
+    size_t findLogicalOr(size_t i);
+    size_t findPow(size_t i);
     size_t findSqrt(size_t i);
+    size_t findRound(size_t i);
+    size_t findFloor(size_t i);
+    size_t findCeil(size_t i);
+    size_t findMkDate(size_t i);
+    size_t findComma(size_t i);
     size_t findLPar(size_t i);
     size_t findRPar(size_t i);
     size_t findField(size_t i);
@@ -284,6 +558,7 @@ struct FormulaImplementation : public Formula
     Token *LA(size_t i);
     size_t parseOps(size_t i);
     size_t parsePar(size_t i);
+    size_t parseMkDate(size_t i);
 
     void handleConstant(Token *number, Token *unit);
     void handleSeconds(Token *number);
@@ -292,8 +567,26 @@ struct FormulaImplementation : public Formula
     void handleSubtraction(Token *add);
     void handleMultiplication(Token *add);
     void handleDivision(Token *add);
+    void handleModulo(Token *add);
+    void handleShiftLeft(Token *add);
+    void handleShiftRight(Token *add);
+    void handleEQ(Token *tok);
+    void handleNEQ(Token *tok);
+    void handleLT(Token *tok);
+    void handleGT(Token *tok);
+    void handleLTE(Token *tok);
+    void handleGTE(Token *tok);
+    void handleBitwiseAnd(Token *tok);
+    void handleBitwiseOr(Token *tok);
+    void handleBitwiseXor(Token *tok);
+    void handleLogicalAnd(Token *tok);
+    void handleLogicalOr(Token *tok);
     void handleExponentiation(Token *add);
     void handleSquareRoot(Token *add);
+    void handleRound(Token *add);
+    void handleFloor(Token *add);
+    void handleCeil(Token *add);
+    void handleMkDate(Token *tok);
     void handleField(Token *field);
 
     void pushOp(NumericFormula *nf);

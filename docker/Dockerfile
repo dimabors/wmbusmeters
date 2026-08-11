@@ -1,9 +1,9 @@
 FROM alpine AS build
-RUN apk add --no-cache alpine-sdk gcc linux-headers libxml2-dev libxslt-dev cmake libusb-dev bash samurai
+RUN apk add --no-cache alpine-sdk pkgconf gcc linux-headers libxml2-dev libxslt-dev cmake libusb-dev bash samurai
 
 RUN git clone --depth 1 https://github.com/steve-m/librtlsdr.git && \
     git clone --depth 1 https://github.com/wmbusmeters/wmbusmeters.git && \
-    git clone --depth 1 https://github.com/weetmuts/rtl-wmbus.git && \
+    git clone --depth 1 https://github.com/wmbusmeters/rtl-wmbus.git && \
     git clone --depth 1 https://github.com/merbanan/rtl_433.git && \
     git clone --depth 1 https://github.com/ED6E0F17/rtl_reset.git && \
     git clone --depth 1 https://github.com/libxmq/xmq.git
@@ -17,7 +17,7 @@ RUN cmake -B build -G Ninja \
     cmake --build build -j `nproc` && \
     cmake --install build
 WORKDIR /wmbusmeters
-RUN make -j`nproc`
+RUN ./configure && make -j`nproc`
 WORKDIR /rtl-wmbus
 RUN make -j`nproc` release && chmod 755 build/rtl_wmbus
 WORKDIR /rtl_433
@@ -30,7 +30,7 @@ WORKDIR /xmq
 RUN ./configure && make -j`nproc`
 
 FROM alpine AS builder
-RUN apk add --no-cache mosquitto-clients libstdc++ curl libusb libxml2
+RUN apk add --no-cache pkgconf mosquitto-clients libstdc++ curl libusb libxml2 ca-certificates
 WORKDIR /wmbusmeters
 COPY --from=build /librtlsdr/build/src/librtlsdr.so.* /usr/lib/
 COPY --from=build /librtlsdr/rtl-sdr.rules /usr/lib/udev/rules.d/rtl-sdr.rules

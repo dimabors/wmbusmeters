@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2017-2022 Fredrik Öhrström (gpl-3.0-or-later)
+ Copyright (C) 2017-2026 Fredrik Öhrström (gpl-3.0-or-later)
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -18,34 +18,15 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#include<signal.h>
+#include"always.h"
+
 #include<cstdint>
+#include<ctime>
 #include<string>
 #include<functional>
 #include<map>
 #include<set>
 #include<vector>
-
-void setVersion(const char *v);
-const char *getVersion();
-
-void onExit(std::function<void()> cb);
-void restoreSignalHandlers();
-bool gotHupped();
-void wakeMeUpOnSigChld(pthread_t t);
-bool signalsInstalled();
-
-typedef unsigned char uchar;
-
-#define call(A,B) ([&](){A->B();})
-#define calll(A,B,T) ([&](T t){A->B(t);})
-
-enum class TestBit
-{
-    Unknown,
-    Set,
-    NotSet
-};
 
 uchar bcd2bin(uchar c);
 uchar revbcd2bin(uchar c);
@@ -93,76 +74,14 @@ std::string strdatetimesec(double v);
 std::string strTimestampUTC(double v);
 void addMonths(struct tm* date, int m);
 double addMonths(double t, int m);
+void addYears(struct tm* date, int y);
+double addYears(double t, int y);
 
 bool stringFoundCaseIgnored(const std::string& haystack, const std::string& needle);
 
 void xorit(uchar *srca, uchar *srcb, uchar *dest, int len);
 void shiftLeft(uchar *srca, uchar *srcb, int len);
 std::string format3fdot3f(double v);
-bool enableLogfile(const std::string& logfile, bool daemon);
-void disableLogfile();
-void enableSyslog();
-void error(const char* fmt, ...);
-
-#define verbose(...) { if (isVerboseEnabled()) { verbose_int(__VA_ARGS__); } }
-void verbose_int(const char* fmt, ...);
-
-#define trace(...) { if (isTraceEnabled()) { trace_int(__VA_ARGS__); } }
-void trace_int(const char* fmt, ...);
-
-#define debug(...) { if (isDebugEnabled()) { debug_int(__VA_ARGS__); } }
-void debug_int(const char* fmt, ...);
-
-void warning(const char* fmt, ...);
-void info(const char* fmt, ...);
-void notice(const char* fmt, ...);
-void notice_always(const char* fmt, ...);
-void notice_timestamp(const char* fmt, ...);
-
-void silentLogging(bool b);
-void verboseEnabled(bool b);
-void debugEnabled(bool b);
-void traceEnabled(bool b);
-
-enum class AddLogTimestamps
-{
-    NotSet, Never, Always, Important
-};
-
-void setLogTimestamps(AddLogTimestamps ts);
-void stderrEnabled(bool b);
-void logTelegramsEnabled(bool b);
-void internalTestingEnabled(bool b);
-bool isInternalTestingEnabled();
-
-bool isVerboseEnabled();
-bool isDebugEnabled();
-bool isTraceEnabled();
-bool isLogTelegramsEnabled();
-
-void setNoNetwork(bool v);
-void setBasicAuth(const std::string& cred);
-void debugPayload(const std::string& intro, std::vector<uchar> &payload);
-void debugPayload(const std::string& intro, std::vector<uchar> &payload, std::vector<uchar>::iterator &pos);
-void logTelegram(std::vector<uchar> &original, std::vector<uchar> &parsed, int header_size, int suffix_size);
-
-void setDownloadDir(const char *dir);
-const char *downloadDir();
-
-// Returns 200 or 404 or 304 etc...
-int download(const char *suffix, const char *file, const char *local_file);
-
-enum class Alarm
-{
-    DeviceFailure,
-    RegularResetFailure,
-    DeviceInactivity,
-    SpecifiedDeviceNotFound
-};
-
-const char* toString(Alarm type);
-void logAlarm(Alarm type, std::string info);
-void setAlarmShells(std::vector<std::string> &alarm_shells);
 
 bool isValidAlias(const std::string& alias);
 bool isValidBps(const std::string& b);
@@ -180,14 +99,6 @@ std::vector<std::string> splitDeviceString(const std::string &s);
 
 void incrementIV(uchar *iv, size_t len);
 
-bool checkCharacterDeviceExists(const char *tty, bool fail_if_not);
-bool checkFileExists(const char *file);
-bool checkIfSimulationFile(const char *file);
-bool checkIfDirExists(const char *dir);
-bool listFiles(const std::string& dir, std::vector<std::string> *files);
-int loadFile(const std::string& file, std::vector<std::string> *lines);
-bool loadFile(const std::string& file, std::vector<char> *buf);
-
 std::string eatTo(std::vector<uchar> &v, std::vector<uchar>::iterator &i, int c, size_t max, bool *eof, bool *err);
 
 void padWithZeroesTo(std::vector<uchar> *content, size_t len, std::vector<uchar> *full_content);
@@ -203,12 +114,20 @@ int parseTime(const std::string& time);
 bool isInsideTimePeriod(time_t now, std::string periods);
 bool isValidTimePeriod(const std::string& periods);
 
+/*
 uint16_t crc16_EN13757(uchar *data, size_t len);
 
 // This crc is used by im871a for its serial communication.
 uint16_t crc16_CCITT(uchar *data, uint16_t length);
 bool     crc16_CCITT_check(uchar *data, uint16_t length);
+*/
 
+// Check if buffer is all SLIP END = 0xc0.
+bool slipAllEND(std::vector<uchar>& msg);
+// Scan the buffer after the byte SLIP END = 0xc0
+// return its index if exists, otherwise -1.
+ssize_t slipFrameSize(std::vector<uchar>& msg);
+// Add a SLIP_END and escape any 0xc0 with 0xdbdc and and 0xdb with 0xdbdd.
 void addSlipFraming(std::vector<uchar>& from, std::vector<uchar> &to);
 // Frame length is set to zero if no frame was found.
 void removeSlipFraming(std::vector<uchar>& from, size_t *frame_length, std::vector<uchar> &to);
@@ -224,15 +143,7 @@ void eatWhitespace(std::vector<char> &v, std::vector<char>::iterator &i, bool *e
 std::string eatToSkipWhitespace(std::vector<char> &v, std::vector<char>::iterator &i, int c, size_t max, bool *eof, bool *err);
 // Remove leading and trailing white space
 void trimWhitespace(std::string *s);
-// Returns AccessOK if device exists and is accessible.
-// NotSameGroup means that there is no permission and the groups do not match.
-// NoPermission means some other reason for no access. (missing rw etc)
-// Locked means that some other process has locked the tty.
-// NoSuchDevice means the tty does not exist.
-// NoProperResponse means that we talked to something, but we do not know what it is.
-enum class AccessCheck { NoSuchDevice, NoProperResponse, NoPermission, NotSameGroup, AccessOK };
-const char* toString(AccessCheck ac);
-AccessCheck checkIfExistsAndHasAccess(const std::string& device);
+
 // Count the number of 1:s in the binary number v.
 int countSetBits(int v);
 
@@ -256,9 +167,6 @@ bool hasBytes(int n, std::vector<uchar>::iterator &pos, std::vector<uchar> &fram
 
 bool startsWith(const std::string& s, std::vector<uchar> &data);
 
-// Sum the memory used by the heap and stack.
-size_t memoryUsage();
-
 std::string humanReadableTwoDecimals(size_t s);
 
 uint32_t indexFromRtlSdrName(const std::string& s);
@@ -278,11 +186,6 @@ bool parseExtras(const std::string& s, std::map<std::string,std::string> *extras
 void checkIfMultipleWmbusMetersRunning();
 
 bool findBytes(std::vector<uchar> &v, uchar a, uchar b, uchar c, size_t *out);
-
-enum class OutputFormat
-{
-    NONE, PLAIN, TERMINAL, JSON, HTML
-};
 
 // Joing two status strings with a space, but merge OKs.
 // I.e. "OK" + "OK" --> "OK"
@@ -312,12 +215,7 @@ int strlen_utf8(const char *s);
 
 int toMfctCode(char a, char b, char c);
 
-bool is_lowercase_alnum_text(const char *text);
-
-// The language that the user expects driver and other messages in.
-const std::string &language();
-
-TestBit toTestBit(const char *s);
+bool is_lowercase_alpha_num_underscore(const char *text);
 
 #ifndef FUZZING
 #define FUZZING false

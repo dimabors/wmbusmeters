@@ -15,12 +15,15 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"wmbus_amb8465.h"
 #include"serial.h"
 #include"threads.h"
+#include"util.h"
 
 #include<assert.h>
 #include<pthread.h>
@@ -352,7 +355,7 @@ uchar setupAmberBusDeviceToSendTelegram(LinkMode lm)
     return 0xff;
 }
 
-struct WMBusAmber : public virtual BusDeviceCommonImplementation
+struct WMBusAmber : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -587,7 +590,7 @@ bool WMBusAmber::deviceSetLinkModes(LinkModeSet lms)
     if (!canSetLinkModes(lms))
     {
         string modes = lms.hr();
-        error("(amb8465) setting link mode(s) %s is not supported for amb8465 \n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(amb8465) setting link mode(s) %s is not supported for amb8465 \n", modes.c_str());
     }
 
     {
@@ -700,7 +703,7 @@ FrameStatus WMBusAmber::checkAMB8465Frame(vector<uchar> &data,
             verbose("(amb8465) no sensible telegram found, clearing buffer.\n");
             uchar last = data[data.size()-1];
             data.clear();
-            data.insert(data.end(), &last, &last+1); // Re-insert the last byte.
+            data.insert(data.end(), last); // Re-insert the last byte.
             return PartialFrame;
         }
     }
@@ -753,14 +756,14 @@ void WMBusAmber::processSerialData()
         {
             verbose("(amb8465) rx long delay (%lds), drop incomplete telegram\n", chunk_time.tv_sec);
 
-            // Only trigger a protocol error if we were receiving a specific command response 
+            // Only trigger a protocol error if we were receiving a specific command response
             // from the stick (starts with AMBER_SERIAL_SOF).
             if (read_buffer_.size() > 0 && read_buffer_[0] == AMBER_SERIAL_SOF)
             {
                 protocolErrorDetected();
             }
 
-            read_buffer_.clear(); 
+            read_buffer_.clear();
         }
         else
         {
@@ -807,8 +810,7 @@ void WMBusAmber::processSerialData()
             vector<uchar> payload;
             if (payload_len > 0)
             {
-                uchar l = payload_len;
-                payload.insert(payload.end(), &l, &l+1); // Re-insert the len byte.
+                payload.insert(payload.end(), payload_len); // Re-insert the len byte.
                 payload.insert(payload.end(), read_buffer_.begin()+payload_offset, read_buffer_.begin()+payload_offset+payload_len);
             }
 
@@ -888,7 +890,7 @@ bool WMBusAmber::sendTelegram(LinkMode lm, TelegramFormat format, vector<uchar> 
 
     if (link_mode == 0xff)
     {
-        error("(amb8465) setting link mode %s for sending is not supported for amb8465 \n", toString(lm));
+        error(EXIT_BUS_DEVICE_ERROR, "(amb8465) setting link mode %s for sending is not supported for amb8465 \n", toString(lm));
     }
 
     {

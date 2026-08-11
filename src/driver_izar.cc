@@ -17,8 +17,12 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"meters_common_implementation.h"
 #include"manufacturer_specificities.h"
+
+using namespace std;
 
 namespace
 {
@@ -39,7 +43,7 @@ namespace
         bool mechanical_fraud_previously;
     };
 
-    struct Driver : public virtual MeterCommonImplementation
+    struct Driver : public MeterCommonImplementation
     {
         Driver(MeterInfo &mi, DriverInfo &di);
 
@@ -67,13 +71,13 @@ namespace
                             "manufacture_year,timestamp");
         di.setMeterType(MeterType::WaterMeter);
         di.addLinkMode(LinkMode::T1);
-        di.addMVT(MANUFACTURER_HYD,  0x07,  0x85);
-        di.addMVT(MANUFACTURER_SAP,  0x15,    -1);
-        di.addMVT(MANUFACTURER_SAP,  0x04,    -1);
-        di.addMVT(MANUFACTURER_SAP,  0x07,  0x00);
-        di.addMVT(MANUFACTURER_DME,  0x07,  0x78);
-        di.addMVT(MANUFACTURER_DME,  0x06,  0x78);
-        di.addMVT(MANUFACTURER_HYD,  0x07,  0x86);
+        // di.addMVT(MANUFACTURER_HYD,  0x07,  0x85);
+        // di.addMVT(MANUFACTURER_SAP,  0x15,    -1);
+        // di.addMVT(MANUFACTURER_SAP,  0x04,    -1);
+        // di.addMVT(MANUFACTURER_SAP,  0x07,  0x00);
+        // di.addMVT(MANUFACTURER_DME,  0x07,  0x78);
+        // di.addMVT(MANUFACTURER_DME,  0x06,  0x78);
+        // di.addMVT(MANUFACTURER_HYD,  0x07,  0x86);
         di.usesProcessContent();
 
         di.setConstructor([](MeterInfo& mi, DriverInfo& di){ return shared_ptr<Meter>(new Driver(mi, di)); });
@@ -126,6 +130,10 @@ namespace
         addStringField("manufacture_year",
                        "The year during which the meter was manufactured.",
                        DEFAULT_PRINT_PROPERTIES);
+
+        addStringField("manufacture_y",
+                       "The year during which the meter was manufactured.",
+                       DEFAULT_PRINT_PROPERTIES|PrintProperty::HIDE);
     }
 
     string Driver::currentAlarmsText(IzarAlarms &alarms)
@@ -244,7 +252,7 @@ namespace
             double last_month_total_water_consumption_l_ = uint32FromBytes(decoded_content, 5, true);
             setNumericValue("last_month_total", Unit::L, last_month_total_water_consumption_l_);
         }
-        
+
         // get the date when the second measurement was taken
         if (decoded_content.size() > 10) {
             uint16_t h0_year = ((decoded_content[10] & 0xF0) >> 1) + ((decoded_content[9] & 0xE0) >> 5);

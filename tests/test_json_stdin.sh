@@ -8,7 +8,7 @@ TESTNAME="Test json on stdin with single telegram"
 TESTRESULT="ERROR"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"multical21","name":"","id":"76348799","status":"DRY","total_m3":6.408,"target_m3":6.408,"flow_temperature_c":127,"external_temperature_c":19,"current_status":"DRY","time_dry":"22-31 days","time_reversed":"","time_leaking":"","time_bursting":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -43,7 +43,7 @@ fi
 TESTNAME="Test json on stdin with multiple telegrams and different keys"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"multical21","name":"","id":"76348799","status":"DRY","total_m3":6.408,"target_m3":6.408,"flow_temperature_c":127,"external_temperature_c":19,"current_status":"DRY","time_dry":"22-31 days","time_reversed":"","time_leaking":"","time_bursting":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 {"_":"telegram","media":"other","meter":"lansenpu","name":"","id":"00010206","status":"OK","a_counter":4711,"b_counter":1234,"timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
@@ -85,7 +85,7 @@ fi
 TESTNAME="Test json on stdin with wrong key (decryption error)"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"multical21","name":"","id":"76348799","error":"decryption failed, please check key","telegram":"2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","error":"decryption failed, please check key","telegram":"2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -121,7 +121,7 @@ fi
 TESTNAME="Test json on stdin with explicit driver"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"multical21","name":"","id":"76348799","status":"DRY","total_m3":6.408,"target_m3":6.408,"flow_temperature_c":127,"external_temperature_c":19,"current_status":"DRY","time_dry":"22-31 days","time_reversed":"","time_leaking":"","time_bursting":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -154,10 +154,10 @@ else
 fi
 
 
-TESTNAME="Test json on stdin with partial decode warning"
+TESTNAME="Test json on stdin with hydroclimav2 decode"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"heat cost allocation","meter":"hydroclima","name":"","id":"68036198","current_consumption_hca":0,"average_ambient_temperature_c":18.66,"max_ambient_temperature_c":47.51,"average_ambient_temperature_last_month_c":15.78,"average_heater_temperature_last_month_c":17.47,"warning":"telegram only partially decoded (26 of 51 bytes)","telegram":"2e44b0099861036853087a000020002F2F036E0000000F100043106A7D2C4A078F12202CB1242A06D3062100210000","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"heat cost allocation","meter":"hydroclimav2","name":"","id":"68036198","consumption_hca":0,"average_ambient_temperature_c":18.66,"max_ambient_temperature_c":47.51,"average_ambient_temperature_last_month_c":15.78,"average_heater_temperature_last_month_c":17.47,"total_consumption_hca":33,"status":"ERROR_FLAGS_4300","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt

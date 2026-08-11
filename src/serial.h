@@ -18,14 +18,12 @@
 #ifndef SERIAL_H_
 #define SERIAL_H_
 
-#include"util.h"
+#include "access_check.h"
 
 #include<functional>
 #include<memory>
 #include<string>
 #include<vector>
-
-using namespace std;
 
 struct SerialCommunicationManager;
 
@@ -68,6 +66,11 @@ struct SerialDevice
     virtual bool checkIfDataIsPending() = 0;
     virtual void fill(std::vector<uchar> &data) = 0; // Fill buffer with raw data.
     virtual SerialCommunicationManager *manager() = 0;
+
+    // Socket-specific methods (no-op defaults for non-socket devices)
+    virtual bool acceptClient() { return false; }
+    virtual void disconnectClient() { }
+    virtual bool hasClient() { return false; }
     virtual void resetInitiated() = 0;
     virtual void resetCompleted() = 0;
 
@@ -77,22 +80,24 @@ struct SerialDevice
 struct SerialCommunicationManager
 {
     // Read from a /dev/ttyUSB0 or /dev/ttyACM0 device with baud settings.
-    virtual shared_ptr<SerialDevice> createSerialDeviceTTY(string dev, int baud_rate, PARITY parity, string purpose) = 0;
+    virtual std::shared_ptr<SerialDevice> createSerialDeviceTTY(std::string dev, int baud_rate, PARITY parity, std::string purpose) = 0;
     // Read from a sub shell.
-    virtual shared_ptr<SerialDevice> createSerialDeviceCommand(string identifier,
-                                                               string command,
-                                                               vector<string> args,
-                                                               vector<string> envs,
-                                                               string purpose) = 0;
+    virtual std::shared_ptr<SerialDevice> createSerialDeviceCommand(std::string identifier,
+                                                               std::string command,
+                                                               std::vector<std::string> args,
+                                                               std::vector<std::string> envs,
+                                                               std::string purpose) = 0;
     // Read from stdin (file="stdin") or a specific file.
-    virtual shared_ptr<SerialDevice> createSerialDeviceFile(string file, string purpose) = 0;
+    virtual std::shared_ptr<SerialDevice> createSerialDeviceFile(std::string file, std::string purpose) = 0;
     // A serial device simulator used for internal testing.
-    virtual shared_ptr<SerialDevice> createSerialDeviceSimulator() = 0;
+    virtual std::shared_ptr<SerialDevice> createSerialDeviceSimulator() = 0;
+    // Listen on a Unix domain socket for incoming connections.
+    virtual std::shared_ptr<SerialDevice> createSerialDeviceSocket(std::string path, std::string purpose) = 0;
 
     // Invoke cb callback when data arrives on the serial device.
-    virtual void listenTo(SerialDevice *sd, function<void()> cb) = 0;
+    virtual void listenTo(SerialDevice *sd, std::function<void()> cb) = 0;
     // Invoke cb callback when the serial device has disappeared!
-    virtual void onDisappear(SerialDevice *sd, function<void()> cb) = 0;
+    virtual void onDisappear(SerialDevice *sd, std::function<void()> cb) = 0;
     // Normally the communication mananager runs for ever.
     // But if you expect configured devices to work, then
     // the manager will exit when there are no working devices.
@@ -103,14 +108,14 @@ struct SerialCommunicationManager
     virtual bool isRunning() = 0;
     // Register a new timer that regularly, every seconds, invokes the callback.
     // Returns an id for the timer.
-    virtual int startRegularCallback(std::string name, int seconds, function<void()> callback) = 0;
+    virtual int startRegularCallback(std::string name, int seconds, std::function<void()> callback) = 0;
     virtual void stopRegularCallback(int id) = 0;
 
     // Verify if the device can be accessed and verbose any failures.
     virtual AccessCheck checkAccess(std::string device,
-                                    shared_ptr<SerialCommunicationManager> manager, // Silly but for now, needs shared pointer to itself....
+                                    std::shared_ptr<SerialCommunicationManager> manager, // Silly but for now, needs shared pointer to itself....
                                     std::string extra_info = "",
-                                    function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> extra_probe = NULL) = 0;
+                                    std::function<AccessCheck(std::string,std::shared_ptr<SerialCommunicationManager>)> extra_probe = NULL) = 0;
     // List all real serial devices (avoid pseudo ttys)
     virtual std::vector<std::string> listSerialTTYs() = 0;
     // Return a serial device for the given device, if it exists! Otherwise NULL.
@@ -120,7 +125,7 @@ struct SerialCommunicationManager
     virtual ~SerialCommunicationManager();
 };
 
-shared_ptr<SerialCommunicationManager> createSerialCommunicationManager(time_t exit_after_seconds,
+std::shared_ptr<SerialCommunicationManager> createSerialCommunicationManager(time_t exit_after_seconds,
                                                                         bool start_event_loop);
 
 #endif

@@ -224,7 +224,7 @@ Received telegram from: 95969798
           manufacturer: (APA) Apator, Poland (0x601)
                   type: Cold water meter (0x16) encrypted
                    ver: 0x01
-                driver: ultrimis
+                driver: ultrimisv2
 Received telegram from: 12345679
           manufacturer: (EFE) Engelmann Sensor, Germany (0x14c5)
                   type: Heat meter (0x04) encrypted
@@ -303,7 +303,7 @@ Received telegram from: 18001698
           manufacturer: (HYD) Diehl Metering, Germany (0x2324)
                   type: Water meter (0x07)
                    ver: 0x85
-                driver: izar
+                driver: izarv2
 Received telegram from: 61070071
           manufacturer: (AAA) Aventies, Germany (0x421)
                   type: Water meter (0x07) encrypted

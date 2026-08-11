@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2017-2021 Fredrik Öhrström (gpl-3.0-or-later)
+ Copyright (C) 2017-2026 Fredrik Öhrström (gpl-3.0-or-later)
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -15,6 +15,9 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include<cstring>
+
+#include"cmdline.h"
 #include"printer.h"
 #include"shell.h"
 

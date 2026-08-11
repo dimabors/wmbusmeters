@@ -16,7 +16,6 @@
 */
 
 #include"bus.h"
-#include"cmdline.h"
 #include"config.h"
 #include"meters.h"
 #include"printer.h"
@@ -27,8 +26,11 @@
 #include"util.h"
 #include"wmbus.h"
 
+#include"utils/alarm.h"
+#include"utils/fs.h"
+
+#include <assert.h>
 #include <algorithm>
-#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -185,8 +187,7 @@ shared_ptr<BusDevice> BusManager::createWmbusObject(Detected *detected, Configur
     switch (detected->found_type)
     {
     case DEVICE_AUTO:
-        assert(0);
-        error("Internal error DEVICE_AUTO should not be used here!\n");
+        error(EXIT_BUS_DEVICE_ERROR, "Internal error DEVICE_AUTO should not be used here!\n");
         break;
     case DEVICE_MBUS:
         verbose("(mbus) on %s\n", detected->found_file.c_str());
@@ -252,13 +253,19 @@ shared_ptr<BusDevice> BusManager::createWmbusObject(Detected *detected, Configur
         wmbus = openIU880B(*detected, serial_manager_, serial_override);
         break;
     }
+    case DEVICE_SOCKET:
+    {
+        verbose("(socket) on %s\n", detected->specified_device.extras.c_str());
+        wmbus = openSocket(*detected, serial_manager_, serial_override);
+        break;
+    }
     case DEVICE_UNKNOWN:
-        warning("(main) internal error! cannot create an unknown device! exiting!\n");
+        error(EXIT_BUS_DEVICE_ERROR, "(main) internal error! cannot create an unknown device! exiting!\n");
         if (config->daemon) {
             // If starting as a daemon, wait a bit so that systemd have time to catch up.
             sleep(1);
         }
-        exit(1);
+        exit(EXIT_BUS_DEVICE_ERROR);
         break;
     }
 
@@ -403,6 +410,27 @@ void BusManager::detectAndConfigureWmbusDevices(Configuration *config, Detection
                 // Therefore, do not try to detect it yet!
                 continue;
             }
+        }
+        if (specified_device.type == DEVICE_SOCKET && specified_device.extras != "")
+        {
+            shared_ptr<SerialDevice> sd = serial_manager_->lookup(specified_device.extras);
+            if (sd != NULL)
+            {
+                trace("(main) socket %s already configured\n", specified_device.extras.c_str());
+                specified_device.handled = true;
+                continue;
+            }
+            Detected detected;
+            detected.setSpecifiedDevice(specified_device);
+            detected.found_file = "";
+            LinkModeSet lms = specified_device.linkmodes;
+            if (lms.empty()) lms = config->default_device_linkmodes;
+            if (lms.empty()) lms.setAll();
+            detected.setAsFound("", DEVICE_SOCKET, 0, false, lms);
+            specified_device.handled = true;
+            openBusDeviceAndPotentiallySetLinkmodes(config, "config", &detected);
+            forceLoadAllDrivers(config);
+            continue;
         }
         if (specified_device.file == "" && specified_device.command == "" && specified_device.hex == "")
         {

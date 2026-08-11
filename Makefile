@@ -19,13 +19,19 @@
 # To build with debug information:
 # make DEBUG=true
 # make DEBUG=true HOST=arm
+# Collect telegrams and other data for perf testing.
+# make COLLECT=true
 
 DESTDIR?=/
 
-ifeq "$(DEBUG)" "true"
-  include $(wildcard build_debug/*/spec.gmk)
-else
-  include $(wildcard build/*/spec.gmk)
+DEFAULT_CONF_DIR?=/etc
+DEFAULT_DEAMON_DRIVER_DOWNLOAD_DIR?=/var/lib/wmbusmeters/wmbusmeters.drivers.d/downloaded
+DEFAULT_USER_DRIVER_DOWNLOAD_DIR?=.local/share/wmbusmeters/wmbusmeters.drivers.d
+
+include $(wildcard build/*/spec.gmk)
+
+ifeq (,$(CONF_NAME))
+    $(error Run configure first!)
 endif
 
 ifeq "$(HOST)" "arm"
@@ -68,10 +74,16 @@ else
         endif
     else
         # Release build
-        DEBUG_FLAGS=-Os -g
+        DEBUG_FLAGS=-O2 -g
         STRIP_BINARY=cp $(BUILD)/wmbusmeters $(BUILD)/wmbusmeters.g; $(STRIP) $(BUILD)/wmbusmeters
         GCOV=To_run_gcov_add_DEBUG=true
     endif
+endif
+
+ifeq "$(COLLECT)" "true"
+    COLLECT_FLAGS=-DCOLLECT
+else
+    COLLECT_FLAGS=
 endif
 
 $(shell mkdir -p $(BUILD))
@@ -130,43 +142,56 @@ endif
 $(info Building $(VERSION))
 
 FUZZFLAGS ?= -DFUZZING=false
-CXXFLAGS ?= $(EXTRA_CXXFLAGS) $(DEBUG_FLAGS) $(FUZZFLAGS) -fPIC -std=c++11 -Wall -Werror=format-security -Wno-unused-function
+CXXFLAGS ?= $(EXTRA_CXXFLAGS) $(DEBUG_FLAGS) $(FUZZFLAGS) -fPIC -std=c++17 -Wall -Werror=format-security -Wno-unused-function
+
+# Inject default paths
+CXXFLAGS +=\
+	   -DDEFAULT_CONF_DIR=\"$(DEFAULT_CONF_DIR)\" \
+	   -DDEFAULT_DEAMON_DRIVER_DOWNLOAD_DIR=\"$(DEFAULT_DEAMON_DRIVER_DOWNLOAD_DIR)\" \
+	   -DDEFAULT_USER_DRIVER_DOWNLOAD_DIR=\"$(DEFAULT_USER_DRIVER_DOWNLOAD_DIR)\"
+
 # Additional fedora rpm package build flags
 # -O2 -flto=auto -ffat-lto-objects -fexceptions -g -grecord-gcc-switches -pipe -Wall -Werror=format-security -Wp,-D_FORTIFY_SOURCE=2 -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -mtune=generic -fasynchronous-unwind-tables -fstack-clash-protection -fcf-protection
-CXXFLAGS += -I$(BUILD)
+CXXFLAGS += -I$(BUILD) -Isrc $(LIBXML_CFLAGS) $(LIBRTLSDR_CFLAGS) $(LIBUSB_CFLAGS) $(COLLECT_FLAGS)
 LDFLAGS  ?= $(DEBUG_LDFLAGS)
+LDFLAGS  += $(LIBXML_LIBS) $(LIBRTLSDR_LIBS) $(LIBUSB_LIBS)
 
-USBLIB = -lusb-1.0
-
-ifeq ($(shell uname -s),FreeBSD)
-    CXXFLAGS += -I/usr/local/include
-    LDFLAGS  += -L/usr/local/lib
-    USBLIB    =  -lusb
-endif
-
-ifeq ($(shell uname -s),Darwin)
-    CXXFLAGS += -I$(shell brew --prefix)/include
-    LDFLAGS  += -L$(shell brew --prefix)/lib
-endif
+#ifeq ($(shell uname -s),Darwin)
+#   CXXFLAGS += -I$(shell brew --prefix)/include
+#    LDFLAGS  += -L$(shell brew --prefix)/lib
+#endif
 
 $(BUILD)/%.o: src/%.cc $(wildcard src/%.h)
-	$(CXX) $(CXXFLAGS) $< -c -E > $@.src
 	$(CXX) $(CXXFLAGS) $< -MMD -c -o $@
 
 $(BUILD)/%.o: src/%.c $(wildcard src/%.h)
-	$(CXX) -I/usr/include/libxml2 $(CXXFLAGS) $< -c -E > $@.src
-	$(CXX) -I/usr/include/libxml2 -fpermissive $(CXXFLAGS)  $< -MMD -c -o $@
+	$(CXX) -fpermissive $(CXXFLAGS) $< -MMD -c -o $@
+
+$(BUILD)/%.o: src/utils/%.cc $(wildcard src/utils/%.h)
+	$(CXX) $(CXXFLAGS) $< -MMD -c -o $@
+
+$(BUILD)/%.o: src/wmbus/%.cc $(wildcard src/wmbus/%.h)
+	$(CXX) $(CXXFLAGS) $< -MMD -c -o $@
+
+$(BUILD)/%.o: src/crypto/%.cc $(wildcard src/crypto/%.h)
+	$(CXX) $(CXXFLAGS) $< -MMD -c -o $@
 
 PROG_OBJS:=\
+	$(BUILD)/access_check.o \
 	$(BUILD)/address.o \
 	$(BUILD)/aes.o \
 	$(BUILD)/aescmac.o \
+	$(BUILD)/des.o \
+	$(BUILD)/alarm.o \
 	$(BUILD)/bus.o \
 	$(BUILD)/cmdline.o \
 	$(BUILD)/config.o \
+	$(BUILD)/crc16.o \
+	$(BUILD)/download.o \
 	$(BUILD)/drivers.o \
 	$(BUILD)/dvparser.o \
 	$(BUILD)/formula.o \
+	$(BUILD)/log.o \
 	$(BUILD)/mbus_rawtty.o \
 	$(BUILD)/metermanager.o \
 	$(BUILD)/meters.o \
@@ -191,18 +216,25 @@ PROG_OBJS:=\
 	$(BUILD)/wmbus_rawtty.o \
 	$(BUILD)/wmbus_xmqtty.o \
 	$(BUILD)/wmbus_rc1180.o \
+	$(BUILD)/wmbus_socket.o \
 	$(BUILD)/wmbus_utils.o \
 	$(BUILD)/xmq.o \
 	$(BUILD)/lora_iu880b.o \
+	$(BUILD)/link_mode.o \
+	$(BUILD)/signal_handling.o \
+	$(BUILD)/slip.o \
+	$(BUILD)/fs.o
 
 # If you run: "make DRIVER=minomess" then only driver_minomess.cc will be compiled into wmbusmeters.
-# The old style drivers meter_xyz.cc must always be compiled in, but eventually they will be gone.
 
 ifeq ($(DRIVER),)
-	DRIVER_OBJS:=$(wildcard src/meter_*.cc) $(wildcard src/driver_*.cc)
+	DRIVER_OBJS:=$(wildcard src/driver_*.cc)
+else ifeq ($(DRIVER),none)
+    $(info Building without deprecated c++ drivers)
+	DRIVER_OBJS:=src/driver_auto.cc src/driver_unknown.cc src/driver_dynamic.cc
 else
     $(info Building a single driver $(DRIVER))
-	DRIVER_OBJS:=src/driver_auto.cc src/driver_unknown.cc src/driver_dynamic.cc $(wildcard src/meter_*.cc) src/driver_$(DRIVER).cc
+	DRIVER_OBJS:=src/driver_auto.cc src/driver_unknown.cc src/driver_dynamic.cc src/driver_$(DRIVER).cc
 endif
 DRIVER_OBJS:=$(patsubst src/%.cc,$(BUILD)/%.o,$(DRIVER_OBJS))
 
@@ -266,11 +298,11 @@ snapcraft:
 $(BUILD)/main.o: $(BUILD)/short_manual.h $(BUILD)/version.h $(BUILD)/authors.h
 
 $(BUILD)/authors.h:
-	./scripts/generate_authors.sh $(BUILD)/authors.h
+	@./scripts/generate_authors.sh $(BUILD)/authors.h
 
 # Build binary with debug information. ~15M size binary.
 $(BUILD)/wmbusmeters.g: $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/main.o $(BUILD)/short_manual.h
-	$(CXX) -o $(BUILD)/wmbusmeters.g $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/main.o $(LDFLAGS) -lrtlsdr -lxml2 $(USBLIB) -lpthread
+	$(CXX) $(DEBUG_FLAGS) -o $(BUILD)/wmbusmeters.g $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/main.o $(LDFLAGS) -lpthread
 
 # Production build will have debug information stripped. ~1.5M size binary.
 # DEBUG=true builds, which has address sanitizer code, will always keep the debug information.
@@ -282,21 +314,53 @@ $(BUILD)/wmbusmetersd: $(BUILD)/wmbusmeters
 	cp $(BUILD)/wmbusmeters $(BUILD)/wmbusmetersd
 
 $(BUILD)/short_manual.h: README.md
-	echo 'R"MANUAL(' > $(BUILD)/short_manual.h
-	sed -n '/wmbusmeters version/,/```/p' README.md \
-	| grep -v 'wmbusmeters version' \
-	| grep -v '```' >> $(BUILD)/short_manual.h
-	echo ')MANUAL";' >> $(BUILD)/short_manual.h
+	@./scripts/generate_short_manual.sh $(BUILD)/short_manual.h
 
 testinternals: $(BUILD)/testinternals
 
 $(BUILD)/testinternals.o: $(PROG_OBJS) $(DRIVER_OBJS) $(wildcard src/*.h)
 
 $(BUILD)/testinternals: $(BUILD)/testinternals.o
-	$(CXX) -o $(BUILD)/testinternals $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/testinternals.o $(LDFLAGS) -lrtlsdr -lxml2 $(USBLIB) -lpthread
+	$(CXX) $(DEBUG_FLAGS) -o $(BUILD)/testinternals $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/testinternals.o $(LDFLAGS)  -lpthread
 
 $(BUILD)/fuzz: $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/fuzz.o
-	$(CXX) -o $(BUILD)/fuzz $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/fuzz.o $(LDFLAGS) -lrtlsdr -lxml2 -lpthread
+	$(CXX) $(DEBUG_FLAGS) -o $(BUILD)/fuzz $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/fuzz.o $(LDFLAGS) -lpthread
+
+# Micro benchmarks for individual functions, one case per benchmarks/<name>.benchmark.cc
+# Usage: make benchmark <name>     e.g. make benchmark char2int
+#        make benchmark            lists the available cases
+BENCHMARK_SRCS  := $(wildcard benchmarks/*.benchmark.cc)
+BENCHMARK_NAMES := $(patsubst benchmarks/%.benchmark.cc,%,$(BENCHMARK_SRCS))
+
+# "make benchmark char2int" passes char2int (and any further args, e.g. an
+# iteration count) as extra goals; capture them and define do-nothing rules so
+# make does not error on them. The name is the 2nd word, anything after is
+# forwarded to the benchmark binary. Scoped to only when benchmark is the first
+# goal, so the no-op rules cannot leak into other builds.
+ifeq (benchmark,$(firstword $(MAKECMDGOALS)))
+  BENCH_NAME := $(word 2,$(MAKECMDGOALS))
+  BENCH_ARGS := $(wordlist 3,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  ifneq ($(BENCH_NAME),)
+    $(eval $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)):;@:)
+  endif
+endif
+
+.PHONY: benchmark
+benchmark:
+ifeq ($(BENCH_NAME),)
+	@echo "Usage: make benchmark <name> [iterations]"
+	@echo "Available benchmarks:"
+	@for n in $(BENCHMARK_NAMES); do echo "  $$n"; done
+else
+	@$(MAKE) --no-print-directory $(BUILD)/$(BENCH_NAME).benchmark
+	@./$(BUILD)/$(BENCH_NAME).benchmark $(BENCH_ARGS)
+endif
+
+$(BUILD)/%.benchmark.o: benchmarks/%.benchmark.cc benchmarks/benchmark.h
+	$(CXX) $(CXXFLAGS) -Ibenchmarks $< -MMD -c -o $@
+
+$(BUILD)/%.benchmark: $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/%.benchmark.o
+	$(CXX) $(DEBUG_FLAGS) -o $@ $(PROG_OBJS) $(DRIVER_OBJS) $(BUILD)/$*.benchmark.o $(LDFLAGS) -lpthread
 
 clean_executables:
 	rm -rf build/wmbusmeters* build_arm/wmbusmeters* build_debug/wmbusmeters* build_arm_debug/wmbusmeters* *~
@@ -355,67 +419,7 @@ testdriverd: build/xmq
 	@./tests/test_drivers.sh build_debug/wmbusmeters driver_${DRIVER}.cc
 
 update_manufacturers:
-	iconv -f utf-8 -t ascii//TRANSLIT -c DLMS_Flagids.csv -o tmp.flags
-	cat tmp.flags | grep -v ^# | cut -f 1 > list.flags
-	cat tmp.flags | grep -v ^# | cut -f 2 > names.flags
-	cat tmp.flags | grep -v ^# | cut -f 3 > countries.flags
-	cat countries.flags | sort -u | grep -v '^$$' > uniquec.flags
-	cat names.flags | tr -d "'" | tr -c 'a-zA-Z0-9\n' ' ' | tr -s ' ' | sed 's/^ //g' | sed 's/ $$//g' > ansi.flags
-	cat ansi.flags | sed 's/\(^.......[^0123456789]*\)[0123456789]\+.*/\1/g' > cleaned.flags
-	cat cleaned.flags | sed -e "$$(sed 's:.*:s/&//Ig:' uniquec.flags)" > cleanedc.flags
-	cat cleanedc.flags | sed \
-	-e 's/ ab\( \|$$\)/ /Ig' \
-	-e 's/ ag\( \|$$\)/ /Ig' \
-	-e 's/ a \?s\( \|$$\)/ /Ig' \
-	-e 's/ co\( \|$$\)/ /Ig' \
-	-e 's/ b \?v\( \|$$\)/ /Ig' \
-	-e 's/ bvba\( \|$$\)/ /Ig' \
-	-e 's/ corp\( \|$$\)/ /Ig' \
-	-e 's/ d \?o \?o\( \|$$\)/ /g' \
-	-e 's/ d \?d\( \|$$\)/ /g' \
-	-e 's/ gmbh//Ig' \
-	-e 's/ gbr//Ig' \
-	-e 's/ inc\( \|$$\)/ /Ig' \
-	-e 's/ kg\( \|$$\)/ /Ig' \
-	-e 's/ llc/ /Ig' \
-	-e 's/ ltd//Ig' \
-	-e 's/ limited//Ig' \
-	-e 's/ nv\( \|$$\)/ /Ig' \
-	-e 's/ oy//Ig' \
-	-e 's/ ood\( \|$$\)/ /Ig' \
-	-e 's/ooo\( \|$$\)/ /Ig' \
-	-e 's/ pvt\( \|$$\)/ /Ig' \
-	-e 's/ pte\( \|$$\)/ /Ig' \
-	-e 's/ pty\( \|$$\)/ /Ig' \
-	-e 's/ plc\( \|$$\)/ /Ig' \
-	-e 's/ private\( \|$$\)/ /Ig' \
-	-e 's/ s \?a\( \|$$\)/ /Ig' \
-	-e 's/ sarl\( \|$$\)/ /Ig' \
-	-e 's/ sagl\( \|$$\)/ /Ig' \
-	-e 's/ s c ul//Ig' \
-	-e 's/ s \?l\( \|$$\)/ /Ig' \
-	-e 's/ s \?p \?a\( \|$$\)/ /Ig' \
-	-e 's/ sp j\( \|$$\)/ /Ig' \
-	-e 's/ sp z o o//Ig' \
-	-e 's/ s r o//Ig' \
-	-e 's/ s \?r \?l//Ig' \
-	-e 's/ ug\( \|$$\)/ /Ig' \
-	> trimmed.flags
-	cat trimmed.flags | tr -s ' ' | sed 's/^ //g' | sed 's/ $$//g' > done.flags
-	paste -d '|,' list.flags done.flags countries.flags | sed 's/,/, /g' | sed 's/ |/|/g' > manufacturers.txt
-	echo "// Copyright (C) $$(date +%Y) Fredrik Öhrström (CC0)" > m.h
-	echo '#ifndef MANUFACTURERS_H' >> m.h
-	echo '#define MANUFACTURERS_H' >> m.h
-	echo '#define MANFCODE(a,b,c) ((a-64)*1024+(b-64)*32+(c-64))' >> m.h
-	echo "#define LIST_OF_MANUFACTURERS \\" >> m.h
-	cat manufacturers.txt | sed -e "s/\(.\)\(.\)\(.\).\(.*\)/X(\1\2\3,MANFCODE('\1','\2','\3'),\"\4\")\\\\/g" | sed 's/, ")/")/' >> m.h
-	echo >> m.h
-	cat manufacturers.txt | sed -e "s/\(.\)\(.\)\(.\).*/#define MANUFACTURER_\1\2\3 MANFCODE('\1','\2','\3')/g" >> m.h
-	echo >> m.h
-	echo '#endif' >> m.h
-	mv m.h src/manufacturers.h
-	rm *.flags manufacturers.txt
-
+	@./scripts/download_dlms.sh
 
 GCC_MAJOR_VERSION:=$(shell cc --version | head -n 1 | sed 's/.* \([0-9][0-9]*\)\.[0-9][0-9]*\.[0-9][0-9]*$$/\1/')
 AFL_HOME:=AFLplusplus
@@ -472,12 +476,13 @@ collect_copyrights:
 
 3rdparty/xmq/build/default/release/xmq: $(wildcard 3rdparty/xmq/src/main/c/* 3rdparty/xmq/src/main/c/parts/*)
 	@mkdir -p 3rdparty
-	@(cd 3rdparty; git clone --depth 1 https://github.com/libxmq/xmq.git; cd xmq; ./configure)
+	@(cd 3rdparty; git clone --depth 1 https://github.com/libxmq/xmq.git; cd xmq; ./configure --with-libxml2=installed --with-libxslt=installed)
 	@cat 3rdparty/xmq/build/default/spec.mk
 	@if [ "$$(cat 3rdparty/xmq/build/default/spec.mk | grep CC)" = "CC:=gcc" ]; then (cd 3rdparty/xmq; make VERBOSE=) ; else rm -f $@ ; mkdir -p $$(dirname $@); touch $@ ; echo "Could not build xmq." ; fi
 
 build/xmq: 3rdparty/xmq/build/default/release/xmq
 	@cp $< $@
+	@./scripts/check_xmq.sh $@
 
 # Include dependency information generated by gcc in a previous compile.
 include $(wildcard $(patsubst %.o,%.d,$(PROG_OBJS) $(DRIVER_OBJS)))

@@ -15,12 +15,17 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"wmbus_im871a.h"
 #include"serial.h"
 #include"threads.h"
+#include"util.h"
+
+#include"crypto/crc16.h"
 
 #include<assert.h>
 #include<pthread.h>
@@ -160,7 +165,7 @@ LIST_OF_IM871A_LINK_MODES
     return "unknown";
 }
 
-struct WMBusIM871aIM170A : public virtual BusDeviceCommonImplementation
+struct WMBusIM871aIM170A : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
@@ -690,7 +695,7 @@ bool WMBusIM871aIM170A::deviceSetLinkModes(LinkModeSet lms)
     if (!canSetLinkModes(lms))
     {
         string modes = lms.hr();
-        error("(im871a) setting link mode(s) %s is not supported for im871a\n", modes.c_str());
+        error(EXIT_BUS_DEVICE_ERROR, "(im871a) setting link mode(s) %s is not supported for im871a\n", modes.c_str());
     }
 
     LOCK_WMBUS_EXECUTING_COMMAND(set_link_modes);
@@ -899,8 +904,7 @@ void WMBusIM871aIM170A::processSerialData()
                 if (endpoint == RADIOLINK_ID &&
                     msgid == RADIOLINK_MSG_WMBUSMSG_IND)
                 {
-                    uchar l = payload_len;
-                    payload.insert(payload.begin(), &l, &l+1); // Re-insert the len byte.
+                    payload.insert(payload.begin(), payload_len); // Re-insert the len byte.
                 }
                 // Insert the payload.
                 payload.insert(payload.end(),

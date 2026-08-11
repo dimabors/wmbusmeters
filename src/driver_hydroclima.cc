@@ -17,9 +17,11 @@
 
 #include"meters_common_implementation.h"
 
+using namespace std;
+
 namespace
 {
-    struct Driver : public virtual MeterCommonImplementation
+    struct Driver : public MeterCommonImplementation
     {
         Driver(MeterInfo &mi, DriverInfo &di);
         void processContent(Telegram *t);
@@ -33,7 +35,7 @@ namespace
         di.setDefaultFields("name,id,current_consumption_hca,average_ambient_temperature_c,timestamp");
         di.setMeterType(MeterType::HeatCostAllocationMeter);
         di.addLinkMode(LinkMode::T1);
-        di.addMVT(MANUFACTURER_BMP, 0x08,  0x53);
+        // MVT moved to hydroclimav2.xmq
         di.usesProcessContent();
         di.setConstructor([](MeterInfo& mi, DriverInfo& di){ return shared_ptr<Meter>(new Driver(mi, di)); });
     });

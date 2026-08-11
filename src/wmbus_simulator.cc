@@ -15,11 +15,15 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"serial.h"
 #include"util.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
+
+#include"utils/fs.h"
 
 #include<assert.h>
 #include<errno.h>
@@ -173,7 +177,7 @@ void WMBusSimulator::simulate()
         bool ok = hex2bin(hex.c_str(), &payload);
         if (!ok)
         {
-            error("Not a valid string of hex bytes! \"%s\"\n", l.c_str());
+            error(EXIT_BUS_DEVICE_ERROR, "Not a valid string of hex bytes! \"%s\"\n", l.c_str());
         }
 
         size_t frame_length;

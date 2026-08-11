@@ -15,20 +15,22 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"always.h"
+#include"log.h"
 #include"wmbus.h"
 #include"wmbus_common_implementation.h"
 #include"wmbus_utils.h"
 #include"serial.h"
+#include"util.h"
 
 #include<assert.h>
 #include<pthread.h>
 #include<semaphore.h>
-#include<errno.h>
 #include<unistd.h>
 
 using namespace std;
 
-struct MBusRawTTY : public virtual BusDeviceCommonImplementation
+struct MBusRawTTY : public BusDeviceCommonImplementation
 {
     bool ping();
     string getDeviceId();
